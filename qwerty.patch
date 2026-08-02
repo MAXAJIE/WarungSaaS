@@ -1,705 +1,544 @@
-diff --git a/src/components/empty-state.tsx b/src/components/empty-state.tsx
-new file mode 100644
---- /dev/null
-+++ b/src/components/empty-state.tsx
-@@ -0,0 +1,52 @@
-+import { Link } from "@tanstack/react-router";
-+import { Sparkles } from "lucide-react";
-+import type { ReactNode } from "react";
-+
-+/**
-+ * Nothing here yet. An empty list is a dead end unless it also tells the person
-+ * what to do next, so every empty state carries one action.
-+ */
-+export function EmptyState({
-+  title,
-+  hint,
-+  actionLabel,
-+  onAction,
-+  to,
-+  icon,
-+}: {
-+  title: string;
-+  hint?: string;
-+  actionLabel?: string;
-+  onAction?: () => void;
-+  to?: string;
-+  icon?: ReactNode;
-+}) {
-+  return (
-+    <div className="cozy-card flex flex-col items-center gap-3 px-6 py-10 text-center">
-+      <span className="grid size-12 place-items-center rounded-2xl bg-secondary text-secondary-foreground">
-+        {icon ?? <Sparkles className="size-5" />}
-+      </span>
-+      <div className="space-y-1">
-+        <p className="font-display text-base font-bold">{title}</p>
-+        {hint && <p className="text-sm text-muted-foreground">{hint}</p>}
-+      </div>
-+      {actionLabel && to && (
-+        <Link
-+          to={to}
-+          className="soft-press rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
-+        >
-+          {actionLabel}
-+        </Link>
-+      )}
-+      {actionLabel && !to && onAction && (
-+        <button
-+          type="button"
-+          onClick={onAction}
-+          className="soft-press rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
-+        >
-+          {actionLabel}
-+        </button>
-+      )}
-+    </div>
-+  );
+diff -ruN '--exclude=node_modules' '--exclude=.git' '--exclude=*.tgz' '--exclude=qwerty.patch' orig/src/components/order-progress.tsx warung/src/components/order-progress.tsx
+--- a/src/components/order-progress.tsx	2026-08-02 05:59:28.169468995 +0000
++++ b/src/components/order-progress.tsx	2026-08-02 06:02:04.670755760 +0000
+@@ -13,13 +13,14 @@
+ 
+ export type OrderStep = (typeof ORDER_STEPS)[number];
+ 
++/** Steps borrow the status wording so the rail and the pill always agree. */
+ const STEP_LABEL: Record<OrderStep, string> = {
+-  submitted: "step_submitted",
+-  approved: "step_paid",
+-  preparing: "step_preparing",
+-  kitchen_done: "step_ready",
+-  received: "step_received",
+-  completed: "step_completed",
++  submitted: "st_submitted",
++  approved: "st_approved",
++  preparing: "st_preparing",
++  kitchen_done: "st_kitchen_done",
++  received: "st_received",
++  completed: "st_completed",
+ };
+ 
+ export function OrderProgress({
+diff -ruN '--exclude=node_modules' '--exclude=.git' '--exclude=*.tgz' '--exclude=qwerty.patch' orig/src/integrations/supabase/types.ts warung/src/integrations/supabase/types.ts
+--- a/src/integrations/supabase/types.ts	2026-08-02 05:59:28.176348098 +0000
++++ b/src/integrations/supabase/types.ts	2026-08-02 06:02:25.018418827 +0000
+@@ -371,6 +371,8 @@
+           ready_at: string | null
+           received_at: string | null
+           source: string
++          special_discount: number
++          special_discount_reason: string
+           status: Database["public"]["Enums"]["order_status"]
+           store_id: string
+           submitted_at: string | null
+@@ -397,6 +399,8 @@
+           ready_at?: string | null
+           received_at?: string | null
+           source?: string
++          special_discount?: number
++          special_discount_reason?: string
+           status?: Database["public"]["Enums"]["order_status"]
+           store_id: string
+           submitted_at?: string | null
+@@ -423,6 +427,8 @@
+           ready_at?: string | null
+           received_at?: string | null
+           source?: string
++          special_discount?: number
++          special_discount_reason?: string
+           status?: Database["public"]["Enums"]["order_status"]
+           store_id?: string
+           submitted_at?: string | null
+@@ -742,6 +748,7 @@
+           created_at: string
+           currency: string
+           disclaimer: string
++          event_spend: number
+           gift_threshold: number
+           id: string
+           is_open: boolean
+@@ -757,6 +764,7 @@
+           created_at?: string
+           currency?: string
+           disclaimer?: string
++          event_spend?: number
+           gift_threshold?: number
+           id?: string
+           is_open?: boolean
+@@ -772,6 +780,7 @@
+           created_at?: string
+           currency?: string
+           disclaimer?: string
++          event_spend?: number
+           gift_threshold?: number
+           id?: string
+           is_open?: boolean
+diff -ruN '--exclude=node_modules' '--exclude=.git' '--exclude=*.tgz' '--exclude=qwerty.patch' orig/src/lib/analytics.server.ts warung/src/lib/analytics.server.ts
+--- a/src/lib/analytics.server.ts	2026-08-02 05:59:28.176495717 +0000
++++ b/src/lib/analytics.server.ts	2026-08-02 06:02:04.670417753 +0000
+@@ -1,6 +1,12 @@
+ import { supabaseAdmin } from "@/integrations/supabase/client.server";
+ import { requireCashier, type AuthedCtx } from "./warung.server";
+ 
++/** Local (not UTC) calendar key, so "today" matches the stall's own clock. */
++function dayKey(iso: string) {
++  const d = new Date(iso);
++  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 +}
-diff --git a/src/components/image-cropper.tsx b/src/components/image-cropper.tsx
-new file mode 100644
---- /dev/null
-+++ b/src/components/image-cropper.tsx
-@@ -0,0 +1,145 @@
-+import { useEffect, useRef, useState } from "react";
-+import { Modal } from "@/components/modal";
-+import { useI18n } from "@/lib/i18n";
 +
-+const FRAME = 288; // on-screen crop frame, in px
-+const OUTPUT = 800; // exported square, in px
-+
-+/**
-+ * Square cropper. Menu photos are shown in square tiles everywhere, so the
-+ * owner picks the square here instead of letting the browser cut it blindly.
-+ * Returns a JPEG data URL of exactly OUTPUT x OUTPUT pixels.
-+ */
-+export function ImageCropper({
-+  file,
-+  onCancel,
-+  onCropped,
-+}: {
-+  file: File;
-+  onCancel: () => void;
-+  onCropped: (dataUrl: string) => void;
-+}) {
-+  const { t } = useI18n();
-+  const [src, setSrc] = useState<string | null>(null);
-+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
-+  const [zoom, setZoom] = useState(1);
-+  const [offset, setOffset] = useState({ x: 0, y: 0 });
-+  const drag = useRef<{ x: number; y: number } | null>(null);
-+
-+  useEffect(() => {
-+    const url = URL.createObjectURL(file);
-+    setSrc(url);
-+    const img = new Image();
-+    img.onload = () => setSize({ w: img.naturalWidth, h: img.naturalHeight });
-+    img.src = url;
-+    return () => URL.revokeObjectURL(url);
-+  }, [file]);
-+
-+  if (!src || !size) {
-+    return (
-+      <Modal open onClose={onCancel} title={t("crop_photo")}>
-+        <p className="text-sm text-muted-foreground">{t("loading")}</p>
-+      </Modal>
-+    );
+ export async function analyticsImpl(ctx: AuthedCtx, data: { days: number }) {
+   const { store } = await requireCashier(ctx);
+   const days = Math.min(90, Math.max(1, data.days || 7));
+@@ -37,11 +43,11 @@
+   for (let i = 0; i < days; i++) {
+     const d = new Date(since);
+     d.setDate(since.getDate() + i);
+-    const key = d.toISOString().slice(0, 10);
++    const key = dayKey(d.toISOString());
+     byDayMap.set(key, { day: key, revenue: 0, cost: 0, orders: 0 });
+   }
+   for (const o of list) {
+-    const key = (o.approved_at ?? o.created_at).slice(0, 10);
++    const key = dayKey(o.approved_at ?? o.created_at);
+     const row = byDayMap.get(key);
+     if (!row) continue;
+     row.revenue += Number(o.total);
+@@ -66,6 +72,25 @@
+     productMap.set(it.name_snapshot, cur);
+   }
+ 
++  // Today is read hour by hour: a single daily bar tells the owner nothing
++  // about when the rush actually happened.
++  const byHour = Array.from({ length: 24 }, (_, h) => ({
++    hour: h,
++    label: `${String(h).padStart(2, "0")}:00`,
++    revenue: 0,
++    cost: 0,
++    orders: 0,
++  }));
++  const todayKey = dayKey(new Date().toISOString());
++  for (const o of list) {
++    const stampIso = o.approved_at ?? o.created_at;
++    if (dayKey(stampIso) !== todayKey) continue;
++    const row = byHour[new Date(stampIso).getHours()]!;
++    row.revenue += Number(o.total);
++    row.cost += Number(o.cost_total);
++    row.orders += 1;
 +  }
 +
-+  const baseScale = FRAME / Math.min(size.w, size.h);
-+  const scale = baseScale * zoom;
-+  const drawnW = size.w * scale;
-+  const drawnH = size.h * scale;
-+  const maxX = Math.max(0, (drawnW - FRAME) / 2);
-+  const maxY = Math.max(0, (drawnH - FRAME) / 2);
-+  const clamped = {
-+    x: Math.min(maxX, Math.max(-maxX, offset.x)),
-+    y: Math.min(maxY, Math.max(-maxY, offset.y)),
-+  };
+   const revenue = list.reduce((s, o) => s + Number(o.total), 0);
+   const cost = list.reduce((s, o) => s + Number(o.cost_total), 0);
+   const discounts = list.reduce((s, o) => s + Number(o.discount_total), 0);
+@@ -81,6 +106,7 @@
+       avgOrder: list.length ? revenue / list.length : 0,
+       margin: revenue ? ((revenue - cost) / revenue) * 100 : 0,
+     },
++    byHour: byHour.map((h) => ({ ...h, profit: h.revenue - h.cost })),
+     byDay: Array.from(byDayMap.values()).map((d) => ({
+       ...d,
+       profit: d.revenue - d.cost,
+diff -ruN '--exclude=node_modules' '--exclude=.git' '--exclude=*.tgz' '--exclude=qwerty.patch' orig/src/lib/customer.server.ts warung/src/lib/customer.server.ts
+--- a/src/lib/customer.server.ts	2026-08-02 05:59:28.176645413 +0000
++++ b/src/lib/customer.server.ts	2026-08-02 06:02:49.550409459 +0000
+@@ -365,7 +365,7 @@
+ export async function confirmReceiptImpl(data: { guestToken: string }) {
+   const order = await loadGuestOrder(data.guestToken);
+   if (!order) throw new Error("GONE");
+-  if (order.status !== "kitchen_done") throw new Error("NOT_READY");
++  if (!["kitchen_done", "received"].includes(order.status)) throw new Error("NOT_READY");
+   const now = new Date().toISOString();
+   await supabaseAdmin
+     .from("orders")
+diff -ruN '--exclude=node_modules' '--exclude=.git' '--exclude=*.tgz' '--exclude=qwerty.patch' orig/src/lib/i18n.tsx warung/src/lib/i18n.tsx
+--- a/src/lib/i18n.tsx	2026-08-02 05:59:28.176920185 +0000
++++ b/src/lib/i18n.tsx	2026-08-02 06:03:17.049458511 +0000
+@@ -178,6 +178,8 @@
+   empty_logs_hint: "Every approval, cook and handover shows up here.",
+   logs_mine: "My activity",
+   logs_everyone: "Everyone",
++  event_spend: "Event spend",
++  event_spend_hint: "Once an order reaches this amount the counter can add a special discount with a reason. 0 turns it off.",
+   order_code_template: "Order number format",
+   order_code_template_hint: "Use 2-3 parts split by dashes. Tags: {STALL} {DATE} {TIME} {SEQ}. {SEQ} is required.",
+   customise: "Customise",
+@@ -459,6 +461,8 @@
+   empty_logs_hint: "每次收款、烹煮和交货都会记录在这里。",
+   logs_mine: "我的记录",
+   logs_everyone: "全部人",
++  event_spend: "活动消费额",
++  event_spend_hint: "订单达到此金额后，收银可填写原因并给予特别折扣。填 0 即关闭。",
+   order_code_template: "订单编号格式",
+   order_code_template_hint: "用短横线分成 2 至 3 段。标签：{STALL} {DATE} {TIME} {SEQ}，必须包含 {SEQ}。",
+   customise: "自选配搭",
+@@ -726,6 +730,8 @@
+   empty_logs_hint: "Setiap kelulusan, masakan dan serahan terpapar di sini.",
+   logs_mine: "Aktiviti saya",
+   logs_everyone: "Semua orang",
++  event_spend: "Perbelanjaan acara",
++  event_spend_hint: "Apabila pesanan mencapai jumlah ini, kaunter boleh beri diskaun khas dengan sebab. 0 mematikannya.",
+   order_code_template: "Format nombor pesanan",
+   order_code_template_hint: "Guna 2-3 bahagian dipisah sengkang. Tag: {STALL} {DATE} {TIME} {SEQ}. {SEQ} wajib.",
+   customise: "Pilihan tambahan",
+diff -ruN '--exclude=node_modules' '--exclude=.git' '--exclude=*.tgz' '--exclude=qwerty.patch' orig/src/lib/orders.functions.ts warung/src/lib/orders.functions.ts
+--- a/src/lib/orders.functions.ts	2026-08-02 05:59:28.177319748 +0000
++++ b/src/lib/orders.functions.ts	2026-08-02 06:02:49.550337989 +0000
+@@ -9,6 +9,8 @@
+   findOrderByCodeImpl,
+   listOrdersImpl,
+   setGiftImpl,
++  setSpecialDiscountImpl,
++  type CounterItemInput,
+ } from "./orders.server";
+ import { analyticsImpl } from "./analytics.server";
+ 
+@@ -18,9 +20,7 @@
+ 
+ export const createWalkInOrder = createServerFn({ method: "POST" })
+   .middleware([requireSupabaseAuth])
+-  .inputValidator(
+-    (d: { customer_name: string; note?: string; items: { product_id: string; qty: number }[] }) => d,
+-  )
++  .inputValidator((d: { customer_name: string; note?: string; items: CounterItemInput[] }) => d)
+   .handler(async ({ context, data }) => createWalkInImpl(context, data));
+ 
+ export const findOrderByCode = createServerFn({ method: "POST" })
+@@ -48,6 +48,11 @@
+   .inputValidator((d: { orderId: string; action: "start" | "kitchen_done" | "receive" | "complete" }) => d)
+   .handler(async ({ context, data }) => advanceOrderImpl(context, data));
+ 
++export const setSpecialDiscount = createServerFn({ method: "POST" })
++  .middleware([requireSupabaseAuth])
++  .inputValidator((d: { orderId: string; amount: number; reason: string }) => d)
++  .handler(async ({ context, data }) => setSpecialDiscountImpl(context, data));
 +
-+  function confirm() {
-+    const canvas = document.createElement("canvas");
-+    canvas.width = OUTPUT;
-+    canvas.height = OUTPUT;
-+    const ctx = canvas.getContext("2d");
-+    if (!ctx) return;
-+    const k = OUTPUT / FRAME;
-+    const img = new Image();
-+    img.onload = () => {
-+      ctx.fillStyle = "#ffffff";
-+      ctx.fillRect(0, 0, OUTPUT, OUTPUT);
-+      const left = (FRAME - drawnW) / 2 + clamped.x;
-+      const top = (FRAME - drawnH) / 2 + clamped.y;
-+      ctx.drawImage(img, left * k, top * k, drawnW * k, drawnH * k);
-+      onCropped(canvas.toDataURL("image/jpeg", 0.88));
-+    };
-+    img.src = src!;
-+  }
+ export const cancelOrder = createServerFn({ method: "POST" })
+   .middleware([requireSupabaseAuth])
+   .inputValidator((d: { orderId: string; reason?: string }) => d)
+diff -ruN '--exclude=node_modules' '--exclude=.git' '--exclude=*.tgz' '--exclude=qwerty.patch' orig/src/lib/orders.server.ts warung/src/lib/orders.server.ts
+--- a/src/lib/orders.server.ts	2026-08-02 05:59:28.177392473 +0000
++++ b/src/lib/orders.server.ts	2026-08-02 06:02:49.550233927 +0000
+@@ -85,9 +85,24 @@
+   return { role: member.role, roles, store, orders: data ?? [] };
+ }
+ 
++export type CounterItemInput = {
++  product_id: string;
++  qty: number;
++  /** Customisations the waiter picked for the guest. */
++  options?: Array<{ option_id: string; value_id: string }>;
++};
 +
-+  return (
-+    <Modal
-+      open
-+      onClose={onCancel}
-+      title={t("crop_photo")}
-+      subtitle={t("crop_hint")}
-+      footer={
-+        <>
-+          <button
-+            onClick={onCancel}
-+            className="soft-press flex-1 rounded-2xl border border-border bg-card px-4 py-3 text-sm font-bold"
-+          >
-+            {t("cancel")}
-+          </button>
-+          <button
-+            onClick={confirm}
-+            className="soft-press flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-lift"
-+          >
-+            {t("save")}
-+          </button>
-+        </>
-+      }
-+    >
-+      <div className="flex flex-col items-center gap-4">
-+        <div
-+          className="relative overflow-hidden rounded-2xl border border-border bg-muted"
-+          style={{ width: FRAME, height: FRAME, touchAction: "none" }}
-+          onPointerDown={(e) => {
-+            drag.current = { x: e.clientX - clamped.x, y: e.clientY - clamped.y };
-+            e.currentTarget.setPointerCapture(e.pointerId);
-+          }}
-+          onPointerMove={(e) => {
-+            if (!drag.current) return;
-+            setOffset({ x: e.clientX - drag.current.x, y: e.clientY - drag.current.y });
-+          }}
-+          onPointerUp={() => {
-+            drag.current = null;
-+            setOffset(clamped);
-+          }}
-+        >
-+          <img
-+            src={src}
-+            alt=""
-+            draggable={false}
-+            className="pointer-events-none absolute select-none"
-+            style={{
-+              width: drawnW,
-+              height: drawnH,
-+              left: (FRAME - drawnW) / 2 + clamped.x,
-+              top: (FRAME - drawnH) / 2 + clamped.y,
-+              maxWidth: "none",
-+            }}
-+          />
-+        </div>
-+        <label className="flex w-full items-center gap-3 text-xs font-semibold text-muted-foreground">
-+          {t("zoom")}
-+          <input
-+            type="range"
-+            min={1}
-+            max={3}
-+            step={0.01}
-+            value={zoom}
-+            onChange={(e) => setZoom(Number(e.target.value))}
-+            className="flex-1"
-+          />
-+        </label>
-+      </div>
-+    </Modal>
++type CounterOptionJoin = {
++  id: string;
++  label: string;
++  price_delta: number | string;
++  option_id: string;
++  product_options: { name: string; product_id: string } | null;
++};
++
+ export async function createWalkInImpl(
+   ctx: AuthedCtx,
+-  data: { customer_name: string; note?: string; items: { product_id: string; qty: number }[] },
++  data: { customer_name: string; note?: string; items: CounterItemInput[] },
+ ) {
+   const { store, member } = await requireCashier(ctx);
+   if (!data.items.length) throw new Error("Add at least one item.");
+@@ -118,17 +133,40 @@
+     .single();
+   if (error) throw new Error(error.message);
+ 
++  // Add-on prices are resolved here, never trusted from the counter screen.
++  const chosenValueIds = Array.from(
++    new Set(data.items.flatMap((i) => (i.options ?? []).map((o) => o.value_id))),
 +  );
-+}
-diff --git a/src/components/product-options-editor.tsx b/src/components/product-options-editor.tsx
-new file mode 100644
---- /dev/null
-+++ b/src/components/product-options-editor.tsx
-@@ -0,0 +1,201 @@
-+import { useState } from "react";
-+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-+import { useServerFn } from "@tanstack/react-start";
-+import { toast } from "sonner";
-+import { Plus, Trash2 } from "lucide-react";
-+import {
-+  deleteProductOption,
-+  listProductOptions,
-+  upsertProductOption,
-+} from "@/lib/staff.functions";
-+import { useI18n } from "@/lib/i18n";
++  const { data: optionValues } = chosenValueIds.length
++    ? await supabaseAdmin
++        .from("product_option_values")
++        .select("id,label,price_delta,option_id,product_options(name,product_id)")
++        .in("id", chosenValueIds)
++    : { data: [] as CounterOptionJoin[] };
 +
-+type Value = { id?: string; label: string; price_delta: number };
-+type OptionDraft = { id?: string; name: string; is_required: boolean; values: Value[] };
-+
-+const inputClass =
-+  "w-full rounded-2xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary";
-+
-+/** Owner-side editor for the choices a customer sees on a product. */
-+export function ProductOptionsEditor({ productId }: { productId: string }) {
-+  const { t } = useI18n();
-+  const qc = useQueryClient();
-+  const list = useServerFn(listProductOptions);
-+  const save = useServerFn(upsertProductOption);
-+  const remove = useServerFn(deleteProductOption);
-+  const [draft, setDraft] = useState<OptionDraft | null>(null);
-+
-+  const options = useQuery({
-+    queryKey: ["product-options", productId],
-+    queryFn: () => list({ data: { product_id: productId } }),
-+  });
-+
-+  const saveM = useMutation({
-+    mutationFn: () =>
-+      save({
-+        data: {
-+          ...(draft?.id ? { id: draft.id } : {}),
-+          product_id: productId,
-+          name: draft!.name,
-+          is_required: draft!.is_required,
-+          values: draft!.values
-+            .filter((v) => v.label.trim())
-+            .map((v, i) => ({ ...v, sort_order: i })),
-+        },
-+      }),
-+    onSuccess: () => {
-+      setDraft(null);
-+      qc.invalidateQueries({ queryKey: ["product-options", productId] });
-+    },
-+    onError: (e: Error) => toast.error(e.message),
-+  });
-+
-+  const delM = useMutation({
-+    mutationFn: (id: string) => remove({ data: { id } }),
-+    onSuccess: () => qc.invalidateQueries({ queryKey: ["product-options", productId] }),
-+    onError: (e: Error) => toast.error(e.message),
-+  });
-+
-+  const rows = options.data ?? [];
-+
-+  return (
-+    <div className="space-y-3">
-+      {rows.map((o) => (
-+        <div key={o.id} className="rounded-2xl border border-border bg-card p-3">
-+          <div className="flex items-center gap-2">
-+            <p className="min-w-0 flex-1 truncate text-sm font-bold">
-+              {o.name}
-+              {o.is_required && <span className="text-destructive"> *</span>}
-+            </p>
-+            <button
-+              type="button"
-+              onClick={() =>
-+                setDraft({
-+                  id: o.id,
-+                  name: o.name,
-+                  is_required: o.is_required,
-+                  values: o.values.map((v) => ({
-+                    id: v.id,
-+                    label: v.label,
-+                    price_delta: Number(v.price_delta),
-+                  })),
-+                })
-+              }
-+              className="soft-press rounded-xl border border-border px-3 py-1 text-xs font-bold"
-+            >
-+              {t("edit")}
-+            </button>
-+            <button
-+              type="button"
-+              onClick={() => delM.mutate(o.id)}
-+              aria-label={t("delete")}
-+              className="soft-press grid size-8 place-items-center rounded-xl bg-destructive/10 text-destructive"
-+            >
-+              <Trash2 className="size-3.5" />
-+            </button>
-+          </div>
-+          <p className="mt-1 text-xs text-muted-foreground">
-+            {o.values.map((v) => v.label).join(" · ") || "—"}
-+          </p>
-+        </div>
-+      ))}
-+
-+      {!draft && (
-+        <button
-+          type="button"
-+          onClick={() => setDraft({ name: "", is_required: false, values: [{ label: "", price_delta: 0 }] })}
-+          className="soft-press inline-flex items-center gap-2 rounded-2xl border border-border bg-card px-4 py-2 text-sm font-bold"
-+        >
-+          <Plus className="size-4" /> {t("add_option")}
-+        </button>
-+      )}
-+
-+      {draft && (
-+        <div className="space-y-3 rounded-2xl border border-border bg-muted/30 p-3">
-+          <input
-+            value={draft.name}
-+            placeholder={t("option_name")}
-+            onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-+            className={inputClass}
-+          />
-+          <label className="flex items-center gap-2 text-sm font-semibold">
-+            <input
-+              type="checkbox"
-+              checked={draft.is_required}
-+              onChange={(e) => setDraft({ ...draft, is_required: e.target.checked })}
-+            />
-+            {t("option_required")}
-+          </label>
-+          {draft.values.map((v, i) => (
-+            <div key={i} className="flex items-center gap-2">
-+              <input
-+                value={v.label}
-+                placeholder={t("value_label")}
-+                onChange={(e) =>
-+                  setDraft({
-+                    ...draft,
-+                    values: draft.values.map((x, j) =>
-+                      j === i ? { ...x, label: e.target.value } : x,
-+                    ),
-+                  })
-+                }
-+                className={inputClass}
-+              />
-+              <input
-+                type="number"
-+                step="0.10"
-+                value={v.price_delta}
-+                aria-label={t("price_delta")}
-+                onChange={(e) =>
-+                  setDraft({
-+                    ...draft,
-+                    values: draft.values.map((x, j) =>
-+                      j === i ? { ...x, price_delta: Number(e.target.value) } : x,
-+                    ),
-+                  })
-+                }
-+                className="w-28 rounded-2xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary"
-+              />
-+              <button
-+                type="button"
-+                aria-label={t("delete")}
-+                onClick={() =>
-+                  setDraft({ ...draft, values: draft.values.filter((_, j) => j !== i) })
-+                }
-+                className="soft-press grid size-9 shrink-0 place-items-center rounded-xl bg-destructive/10 text-destructive"
-+              >
-+                <Trash2 className="size-3.5" />
-+              </button>
-+            </div>
-+          ))}
-+          <div className="flex flex-wrap gap-2">
-+            <button
-+              type="button"
-+              onClick={() =>
-+                setDraft({ ...draft, values: [...draft.values, { label: "", price_delta: 0 }] })
-+              }
-+              className="soft-press rounded-2xl border border-border bg-card px-4 py-2 text-xs font-bold"
-+            >
-+              <Plus className="mr-1 inline size-3.5" /> {t("add_value")}
-+            </button>
-+            <button
-+              type="button"
-+              disabled={!draft.name.trim() || saveM.isPending}
-+              onClick={() => saveM.mutate()}
-+              className="soft-press rounded-2xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground disabled:opacity-60"
-+            >
-+              {t("save_option")}
-+            </button>
-+            <button
-+              type="button"
-+              onClick={() => setDraft(null)}
-+              className="soft-press rounded-2xl border border-border px-4 py-2 text-xs font-bold"
-+            >
-+              {t("cancel")}
-+            </button>
-+          </div>
-+        </div>
-+      )}
-+    </div>
-+  );
-+}
-diff --git a/supabase/migrations/20260803000000_add_owner_role.sql b/supabase/migrations/20260803000000_add_owner_role.sql
-new file mode 100644
---- /dev/null
-+++ b/supabase/migrations/20260803000000_add_owner_role.sql
-@@ -0,0 +1,6 @@
-+-- Adds the "owner" role to the staff_role enum.
-+--
-+-- This lives in its own migration on purpose: Postgres refuses to use a new
-+-- enum label in the same transaction that added it, and every later migration
-+-- writes rows with role = 'owner'.
-+ALTER TYPE public.staff_role ADD VALUE IF NOT EXISTS 'owner';
-diff --git a/supabase/migrations/20260803000100_owner_multirole_order_codes.sql b/supabase/migrations/20260803000100_owner_multirole_order_codes.sql
-new file mode 100644
---- /dev/null
-+++ b/supabase/migrations/20260803000100_owner_multirole_order_codes.sql
-@@ -0,0 +1,241 @@
-+-- Owner/cashier separation, stacked roles, templated pickup numbers,
-+-- product customisations and per-actor activity logs.
-+--
-+-- Design notes:
-+--   * store_members.role stays as the person's PRIMARY role so nothing that
-+--     already reads it breaks. The new member_roles table holds the full set.
-+--     Only the owner is allowed to hold more than one row there.
-+--   * Every helper below is SECURITY DEFINER so RLS policies can call it
-+--     without recursing into the table being protected.
-+
-+-- ---------------------------------------------------------------- roles ----
-+
-+CREATE TABLE IF NOT EXISTS public.member_roles (
-+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-+  store_id UUID NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
-+  member_id UUID NOT NULL REFERENCES public.store_members(id) ON DELETE CASCADE,
-+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-+  role public.staff_role NOT NULL,
-+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-+  UNIQUE (member_id, role)
-+);
-+CREATE INDEX IF NOT EXISTS member_roles_user_idx ON public.member_roles(user_id);
-+
-+GRANT SELECT ON public.member_roles TO authenticated;
-+GRANT ALL ON public.member_roles TO service_role;
-+ALTER TABLE public.member_roles ENABLE ROW LEVEL SECURITY;
-+
-+-- Backfill: whoever created the store becomes the owner and keeps the counter
-+-- hat, because a one-person stall still has to take payment.
-+UPDATE public.store_members m
-+   SET role = 'owner'
-+  FROM public.stores s
-+ WHERE s.id = m.store_id
-+   AND s.owner_id = m.user_id
-+   AND m.role <> 'owner';
-+
-+INSERT INTO public.member_roles (store_id, member_id, user_id, role)
-+SELECT m.store_id, m.id, m.user_id, m.role
-+  FROM public.store_members m
-+ON CONFLICT DO NOTHING;
-+
-+INSERT INTO public.member_roles (store_id, member_id, user_id, role)
-+SELECT m.store_id, m.id, m.user_id, 'cashier'::public.staff_role
-+  FROM public.store_members m
-+ WHERE m.role = 'owner'
-+ON CONFLICT DO NOTHING;
-+
-+CREATE OR REPLACE FUNCTION public.my_roles()
-+RETURNS public.staff_role[] LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-+  SELECT COALESCE(
-+    (SELECT array_agg(DISTINCT r.role) FROM public.member_roles r WHERE r.user_id = auth.uid()),
-+    (SELECT array_agg(m.role) FROM public.store_members m WHERE m.user_id = auth.uid()),
-+    '{}'::public.staff_role[]
-+  );
-+$$;
-+
-+CREATE OR REPLACE FUNCTION public.has_store_role(p_role public.staff_role)
-+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-+  SELECT p_role = ANY (public.my_roles());
-+$$;
-+
-+CREATE OR REPLACE FUNCTION public.is_owner()
-+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-+  SELECT public.has_store_role('owner');
-+$$;
-+
-+-- Redefined: "can this person take payment?" now includes the owner.
-+CREATE OR REPLACE FUNCTION public.is_cashier()
-+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-+  SELECT public.has_store_role('cashier') OR public.has_store_role('owner');
-+$$;
-+
-+-- Redefined: highest-privilege role first, so single-role reads stay sensible.
-+CREATE OR REPLACE FUNCTION public.my_role()
-+RETURNS public.staff_role LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-+  SELECT r FROM unnest(public.my_roles()) AS r
-+  ORDER BY CASE r WHEN 'owner' THEN 0 WHEN 'cashier' THEN 1 WHEN 'kitchen' THEN 2 ELSE 3 END
-+  LIMIT 1;
-+$$;
-+
-+REVOKE ALL ON FUNCTION public.my_roles() FROM PUBLIC, anon;
-+REVOKE ALL ON FUNCTION public.has_store_role(public.staff_role) FROM PUBLIC, anon;
-+REVOKE ALL ON FUNCTION public.is_owner() FROM PUBLIC, anon;
-+GRANT EXECUTE ON FUNCTION public.my_roles() TO authenticated, service_role;
-+GRANT EXECUTE ON FUNCTION public.has_store_role(public.staff_role) TO authenticated, service_role;
-+GRANT EXECUTE ON FUNCTION public.is_owner() TO authenticated, service_role;
-+
-+CREATE POLICY "member roles read by staff" ON public.member_roles FOR SELECT TO authenticated
-+  USING (store_id = public.my_store_id());
-+
-+-- Management is the owner's job from here on.
-+DROP POLICY IF EXISTS "products managed by cashier" ON public.products;
-+CREATE POLICY "products managed by owner" ON public.products FOR ALL TO authenticated
-+  USING (store_id = public.my_store_id() AND public.is_owner())
-+  WITH CHECK (store_id = public.my_store_id() AND public.is_owner());
-+
-+DROP POLICY IF EXISTS "vouchers managed by cashier" ON public.vouchers;
-+CREATE POLICY "vouchers managed by owner" ON public.vouchers FOR ALL TO authenticated
-+  USING (store_id = public.my_store_id() AND public.is_owner())
-+  WITH CHECK (store_id = public.my_store_id() AND public.is_owner());
-+
-+DROP POLICY IF EXISTS "gifts managed by cashier" ON public.gifts;
-+CREATE POLICY "gifts managed by owner" ON public.gifts FOR ALL TO authenticated
-+  USING (store_id = public.my_store_id() AND public.is_owner())
-+  WITH CHECK (store_id = public.my_store_id() AND public.is_owner());
-+
-+DROP POLICY IF EXISTS "invites cashier write" ON public.store_invites;
-+DROP POLICY IF EXISTS "invites cashier delete" ON public.store_invites;
-+CREATE POLICY "invites owner write" ON public.store_invites FOR INSERT TO authenticated
-+  WITH CHECK (store_id = public.my_store_id() AND public.is_owner());
-+CREATE POLICY "invites owner delete" ON public.store_invites FOR DELETE TO authenticated
-+  USING (store_id = public.my_store_id() AND public.is_owner());
-+
-+DROP POLICY IF EXISTS "cashiers write groups" ON public.kitchen_groups;
-+CREATE POLICY "owners write groups" ON public.kitchen_groups FOR ALL TO authenticated
-+  USING (store_id = public.my_store_id() AND public.is_owner())
-+  WITH CHECK (store_id = public.my_store_id() AND public.is_owner());
-+
-+-- ------------------------------------------------- pickup order numbers ----
-+
-+ALTER TABLE public.stores
-+  ADD COLUMN IF NOT EXISTS order_code_template TEXT NOT NULL DEFAULT '{STALL}-{SEQ}',
-+  ADD COLUMN IF NOT EXISTS order_seq INTEGER NOT NULL DEFAULT 0;
-+
-+ALTER TABLE public.orders
-+  ADD COLUMN IF NOT EXISTS order_code TEXT,
-+  ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ;
-+
-+CREATE INDEX IF NOT EXISTS orders_store_code_idx ON public.orders(store_id, order_code);
-+
-+/*
-+ * Mints the human-facing pickup number the moment payment is approved.
-+ * The template is owner-defined and uses 2-3 dash separated parts drawn from
-+ * {STALL} {DATE} {TIME} {SEQ}. The sequence is continuous per store and is
-+ * bumped under a row lock so two cashiers can never mint the same number.
+   const rows = data.items.flatMap((i) => {
+     const p = (products ?? []).find((x) => x.id === i.product_id);
+     if (!p) return [];
++    const picked = (i.options ?? []).flatMap((sel) => {
++      const v = ((optionValues ?? []) as CounterOptionJoin[]).find(
++        (x) => x.id === sel.value_id && x.product_options?.product_id === p.id,
++      );
++      return v
++        ? [{ name: v.product_options?.name ?? "", label: v.label, price_delta: Number(v.price_delta) }]
++        : [];
++    });
++    const addOn = picked.reduce((sum, o) => sum + o.price_delta, 0);
+     return [
+       {
+         order_id: order.id,
+         product_id: p.id,
+-        name_snapshot: p.name,
+-        unit_price: p.sell_price,
++        name_snapshot: picked.length
++          ? `${p.name} (${picked.map((o) => o.label).join(", ")})`
++          : p.name,
++        unit_price: Number(p.sell_price) + addOn,
+         unit_cost: p.cost_price,
+         qty: Math.max(1, i.qty),
++        options: picked as never,
+       },
+     ];
+   });
+@@ -346,7 +384,7 @@
+   kitchen_done: {
+     from: ["preparing", "approved"],
+     to: "kitchen_done",
+-    roles: ["pickup", "kitchen", "owner"],
++    roles: ["pickup", "kitchen", "cashier", "owner"],
+     stamp: "ready_at",
+   },
+   receive: { from: ["kitchen_done"], to: "received", roles: ["pickup", "owner"] },
+@@ -417,6 +455,52 @@
+   return loadFullOrder(order.id);
+ }
+ 
++/**
++ * Event discount: the counter may knock an amount off a ticket that reached the
++ * store's event spend, and must say why. Both numbers are validated here so the
++ * browser can never invent a discount.
 + */
-+CREATE OR REPLACE FUNCTION public.assign_order_code(p_order UUID)
-+RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-+DECLARE
-+  v_store   public.stores%ROWTYPE;
-+  v_seq     INTEGER;
-+  v_code    TEXT;
-+  v_stall   TEXT;
-+  v_existing TEXT;
-+BEGIN
-+  SELECT order_code INTO v_existing FROM public.orders WHERE id = p_order;
-+  IF v_existing IS NOT NULL AND v_existing <> '' THEN
-+    RETURN v_existing;
-+  END IF;
++export async function setSpecialDiscountImpl(
++  ctx: AuthedCtx,
++  data: { orderId: string; amount: number; reason: string },
++) {
++  const { store, member, roles } = await requireCashier(ctx);
++  const { data: order } = await supabaseAdmin
++    .from("orders")
++    .select("*")
++    .eq("id", data.orderId)
++    .eq("store_id", store.id)
++    .maybeSingle();
++  if (!order) throw new Error("Order not found.");
++  if (order.status !== "submitted")
++    throw new Error("A discount can only be added before payment is approved.");
 +
-+  SELECT s.* INTO v_store
-+    FROM public.stores s
-+    JOIN public.orders o ON o.store_id = s.id
-+   WHERE o.id = p_order
-+   FOR UPDATE OF s;
-+  IF NOT FOUND THEN
-+    RETURN NULL;
-+  END IF;
++  const threshold = Number((store as { event_spend?: number | string }).event_spend ?? 0);
++  if (threshold <= 0) throw new Error("No event discount is running.");
++  if (Number(order.subtotal) < threshold)
++    throw new Error("This order has not reached the event spend yet.");
 +
-+  v_seq := v_store.order_seq + 1;
-+  UPDATE public.stores SET order_seq = v_seq WHERE id = v_store.id;
++  const amount = Math.max(0, Math.min(Number(order.subtotal), Number(data.amount) || 0));
++  const reason = (data.reason ?? "").trim().slice(0, 120);
++  if (amount > 0 && !reason) throw new Error("Please give a reason for the discount.");
 +
-+  -- Short, readable stall tag: letters/digits of the slug, capped at 4.
-+  v_stall := upper(substring(regexp_replace(coalesce(v_store.slug, v_store.name), '[^a-zA-Z0-9]', '', 'g') FROM 1 FOR 4));
-+  IF v_stall = '' THEN v_stall := 'STL'; END IF;
++  await supabaseAdmin
++    .from("orders")
++    .update({ special_discount: amount, special_discount_reason: reason } as never)
++    .eq("id", order.id);
++  await recomputeOrder(order.id);
++  await logAction({
++    storeId: store.id,
++    actorId: ctx.userId,
++    actorLabel: member.display_name,
++    orderId: order.id,
++    actorRole: roles.includes("owner") ? "owner" : "cashier",
++    action: "order.special_discount",
++    detail: { amount, reason },
++  });
++  return loadFullOrder(order.id);
++}
 +
-+  v_code := coalesce(nullif(v_store.order_code_template, ''), '{STALL}-{SEQ}');
-+  v_code := replace(v_code, '{STALL}', v_stall);
-+  v_code := replace(v_code, '{DATE}', to_char(now(), 'MMDD'));
-+  v_code := replace(v_code, '{TIME}', to_char(now(), 'HH24MI'));
-+  v_code := replace(v_code, '{SEQ}', lpad(v_seq::text, 3, '0'));
+ export async function cancelOrderImpl(ctx: AuthedCtx, data: { orderId: string; reason?: string }) {
+   const { store, member, roles } = await requireCashier(ctx);
+   const { data: order } = await supabaseAdmin
+diff -ruN '--exclude=node_modules' '--exclude=.git' '--exclude=*.tgz' '--exclude=qwerty.patch' orig/src/lib/staff.functions.ts warung/src/lib/staff.functions.ts
+--- a/src/lib/staff.functions.ts	2026-08-02 05:59:28.177461826 +0000
++++ b/src/lib/staff.functions.ts	2026-08-02 06:02:04.670644719 +0000
+@@ -63,6 +63,7 @@
+       disclaimer?: string;
+       is_open?: boolean;
+       order_code_template?: string;
++      event_spend?: number;
+     }) => d,
+   )
+   .handler(async ({ context, data }) => updateStoreImpl(context, data));
+diff -ruN '--exclude=node_modules' '--exclude=.git' '--exclude=*.tgz' '--exclude=qwerty.patch' orig/src/lib/staff.server.ts warung/src/lib/staff.server.ts
+--- a/src/lib/staff.server.ts	2026-08-02 05:59:28.177554990 +0000
++++ b/src/lib/staff.server.ts	2026-08-02 06:02:04.670563121 +0000
+@@ -181,14 +181,16 @@
+     is_open?: boolean;
+     /** Pickup-number template, e.g. "{STALL}-{SEQ}". */
+     order_code_template?: string;
++    /** Spend that unlocks the counter's event discount. 0 disables it. */
++    event_spend?: number;
+   },
+ ) {
+   const { store, member } = await requireOwner(ctx);
+   if (data.order_code_template !== undefined)
+     data.order_code_template = normaliseOrderTemplate(data.order_code_template);
+-  const { data: updated, error } = await ctx.supabase
++  const { data: updated, error } = await supabaseAdmin
+     .from("stores")
+-    .update(data)
++    .update(data as never)
+     .eq("id", store.id)
+     .select("*")
+     .single();
+@@ -567,7 +569,26 @@
+   data: { memberId: string; group_id: string | null },
+ ) {
+   const { store, member } = await requireCashier(ctx);
+-  const { error } = await ctx.supabase
++  // Row-level security lets a member edit only their own row, so moving
++  // somebody else between compartments runs through the admin client after the
++  // caller has been checked and the target confirmed to be in the same store.
++  const { data: target } = await supabaseAdmin
++    .from("store_members")
++    .select("id,store_id")
++    .eq("id", data.memberId)
++    .eq("store_id", store.id)
++    .maybeSingle();
++  if (!target) throw new Error("Person not found in your store.");
++  if (data.group_id) {
++    const { data: group } = await supabaseAdmin
++      .from("kitchen_groups")
++      .select("id")
++      .eq("id", data.group_id)
++      .eq("store_id", store.id)
++      .maybeSingle();
++    if (!group) throw new Error("That compartment does not exist.");
++  }
++  const { error } = await supabaseAdmin
+     .from("store_members")
+     .update({ group_id: data.group_id })
+     .eq("id", data.memberId)
+diff -ruN '--exclude=node_modules' '--exclude=.git' '--exclude=*.tgz' '--exclude=qwerty.patch' orig/src/lib/warung.server.ts warung/src/lib/warung.server.ts
+--- a/src/lib/warung.server.ts	2026-08-02 05:59:28.177730477 +0000
++++ b/src/lib/warung.server.ts	2026-08-02 06:02:04.670319371 +0000
+@@ -177,6 +177,10 @@
+         ? (subtotal * Number(voucher.value)) / 100
+         : Math.min(subtotal, Number(voucher.value));
+   }
++  // An event discount is a manual, reason-tagged reduction the counter may add
++  // once the ticket clears the store's event spend threshold.
++  const special = Math.max(0, Number((order as { special_discount?: number | string }).special_discount ?? 0));
++  discount += special;
+   const total = Math.max(0, subtotal - discount);
+ 
+   const { data: updated } = await supabaseAdmin
+diff -ruN '--exclude=node_modules' '--exclude=.git' '--exclude=*.tgz' '--exclude=qwerty.patch' orig/src/routes/_authenticated/store.tsx warung/src/routes/_authenticated/store.tsx
+--- a/src/routes/_authenticated/store.tsx	2026-08-02 05:59:28.178892377 +0000
++++ b/src/routes/_authenticated/store.tsx	2026-08-02 06:03:04.859132699 +0000
+@@ -41,10 +41,17 @@
+   const [threshold, setThreshold] = useState(0);
+   const [disclaimer, setDisclaimer] = useState("");
+   const [open, setOpen] = useState(true);
++  const [template, setTemplate] = useState("{STALL}-{SEQ}");
++  const [eventSpend, setEventSpend] = useState(0);
+ 
+   const store = me.data?.store;
+-  const role = me.data?.member?.role ?? null;
+-  const isCashier = role === "cashier";
++  const roles = (me.data?.roles?.length
++    ? me.data.roles
++    : me.data?.member
++      ? [me.data.member.role]
++      : []) as string[];
++  // Store settings belong to the owner, whatever other hats they also wear.
++  const isOwner = roles.includes("owner");
+ 
+   useEffect(() => {
+     if (!store) return;
+@@ -54,6 +61,8 @@
+     setThreshold(Number(store.gift_threshold ?? 0));
+     setDisclaimer(store.disclaimer ?? "");
+     setOpen(!!store.is_open);
++    setTemplate(store.order_code_template ?? "{STALL}-{SEQ}");
++    setEventSpend(Number((store as { event_spend?: number }).event_spend ?? 0));
+   }, [store]);
+ 
+   const storeMutation = useMutation({
+@@ -66,6 +75,8 @@
+           gift_threshold: threshold,
+           disclaimer,
+           is_open: open,
++          order_code_template: template,
++          event_spend: eventSpend,
+         },
+       }),
+     onSuccess: () => {
+@@ -76,7 +87,7 @@
+   });
+ 
+   return (
+-    <StaffShell title={t("nav_store")} role={role} storeName={store?.name ?? null}>
++    <StaffShell title={t("nav_store")} roles={roles as never} storeName={store?.name ?? null}>
+       <div className="mx-auto max-w-2xl space-y-6 py-2">
+         <section className="cozy-card p-6">
+           <div className="flex items-center gap-3">
+@@ -98,7 +109,7 @@
+             </div>
+           </div>
+ 
+-          {!isCashier ? (
++          {!isOwner ? (
+             <p className="mt-5 rounded-2xl bg-muted/50 p-4 text-sm text-muted-foreground">
+               {t("owner_only")}
+             </p>
+@@ -154,6 +165,38 @@
+                 </label>
+               </div>
+ 
++              <div className="grid gap-3 sm:grid-cols-2">
++                <label className="block">
++                  <span className="text-xs font-semibold text-muted-foreground">
++                    {t("order_code_template")}
++                  </span>
++                  <input
++                    value={template}
++                    onChange={(e) => setTemplate(e.target.value)}
++                    className={`mt-1 ${inputClass}`}
++                  />
++                  <span className="mt-1 block text-[11px] text-muted-foreground">
++                    {t("order_code_template_hint")}
++                  </span>
++                </label>
++                <label className="block">
++                  <span className="text-xs font-semibold text-muted-foreground">
++                    {t("event_spend")} (RM)
++                  </span>
++                  <input
++                    type="number"
++                    min={0}
++                    step="0.01"
++                    value={eventSpend}
++                    onChange={(e) => setEventSpend(Number(e.target.value))}
++                    className={`mt-1 ${inputClass}`}
++                  />
++                  <span className="mt-1 block text-[11px] text-muted-foreground">
++                    {t("event_spend_hint")}
++                  </span>
++                </label>
++              </div>
 +
-+  UPDATE public.orders SET order_code = v_code WHERE id = p_order;
-+  RETURN v_code;
-+END; $$;
+               <label className="block">
+                 <span className="text-xs font-semibold text-muted-foreground">
+                   {t("disclaimer_title")}
+diff -ruN '--exclude=node_modules' '--exclude=.git' '--exclude=*.tgz' '--exclude=qwerty.patch' orig/supabase/migrations/20260804000000_event_spend_discount.sql warung/supabase/migrations/20260804000000_event_spend_discount.sql
+--- a/supabase/migrations/20260804000000_event_spend_discount.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/supabase/migrations/20260804000000_event_spend_discount.sql	2026-08-02 06:02:18.588491860 +0000
+@@ -0,0 +1,14 @@
++-- Event spend: once a ticket reaches the amount the owner sets, the counter may
++-- attach a manual, reason-tagged discount to it. 0 disables the whole feature.
 +
-+REVOKE ALL ON FUNCTION public.assign_order_code(UUID) FROM PUBLIC, anon, authenticated;
-+GRANT EXECUTE ON FUNCTION public.assign_order_code(UUID) TO service_role;
++alter table public.stores
++  add column if not exists event_spend numeric(10, 2) not null default 0;
 +
-+-- ------------------------------------------------ product customisations ---
++alter table public.orders
++  add column if not exists special_discount numeric(10, 2) not null default 0,
++  add column if not exists special_discount_reason text not null default '';
 +
-+CREATE TABLE IF NOT EXISTS public.product_options (
-+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-+  store_id UUID NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
-+  product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
-+  name TEXT NOT NULL,
-+  is_required BOOLEAN NOT NULL DEFAULT false,
-+  max_select INTEGER NOT NULL DEFAULT 1,
-+  sort_order INTEGER NOT NULL DEFAULT 0,
-+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-+);
-+CREATE INDEX IF NOT EXISTS product_options_product_idx ON public.product_options(product_id);
-+
-+CREATE TABLE IF NOT EXISTS public.product_option_values (
-+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-+  option_id UUID NOT NULL REFERENCES public.product_options(id) ON DELETE CASCADE,
-+  label TEXT NOT NULL,
-+  price_delta NUMERIC(10,2) NOT NULL DEFAULT 0,
-+  sort_order INTEGER NOT NULL DEFAULT 0,
-+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-+);
-+CREATE INDEX IF NOT EXISTS product_option_values_option_idx ON public.product_option_values(option_id);
-+
-+GRANT SELECT, INSERT, UPDATE, DELETE ON public.product_options TO authenticated;
-+GRANT SELECT ON public.product_options TO anon;
-+GRANT ALL ON public.product_options TO service_role;
-+ALTER TABLE public.product_options ENABLE ROW LEVEL SECURITY;
-+CREATE POLICY "members read product options" ON public.product_options FOR SELECT TO authenticated
-+  USING (store_id = public.my_store_id());
-+CREATE POLICY "public read product options" ON public.product_options FOR SELECT TO anon USING (true);
-+CREATE POLICY "owners write product options" ON public.product_options FOR ALL TO authenticated
-+  USING (store_id = public.my_store_id() AND public.is_owner())
-+  WITH CHECK (store_id = public.my_store_id() AND public.is_owner());
-+
-+GRANT SELECT, INSERT, UPDATE, DELETE ON public.product_option_values TO authenticated;
-+GRANT SELECT ON public.product_option_values TO anon;
-+GRANT ALL ON public.product_option_values TO service_role;
-+ALTER TABLE public.product_option_values ENABLE ROW LEVEL SECURITY;
-+CREATE POLICY "members read option values" ON public.product_option_values FOR SELECT TO authenticated
-+  USING (EXISTS (SELECT 1 FROM public.product_options o WHERE o.id = option_id AND o.store_id = public.my_store_id()));
-+CREATE POLICY "public read option values" ON public.product_option_values FOR SELECT TO anon USING (true);
-+CREATE POLICY "owners write option values" ON public.product_option_values FOR ALL TO authenticated
-+  USING (public.is_owner() AND EXISTS (SELECT 1 FROM public.product_options o WHERE o.id = option_id AND o.store_id = public.my_store_id()))
-+  WITH CHECK (public.is_owner() AND EXISTS (SELECT 1 FROM public.product_options o WHERE o.id = option_id AND o.store_id = public.my_store_id()));
-+
-+-- What the customer actually picked, frozen onto the line item.
-+ALTER TABLE public.order_items
-+  ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '[]'::jsonb;
-+
-+-- ------------------------------------------------------- activity logs -----
-+
-+ALTER TABLE public.activity_logs
-+  ADD COLUMN IF NOT EXISTS actor_role public.staff_role;
-+
-+CREATE INDEX IF NOT EXISTS activity_actor_idx ON public.activity_logs(store_id, actor_id, created_at DESC);
-+
-+-- Everyone keeps a log, but staff only see the entries they caused.
-+-- The owner sees the whole stall and can narrow to themselves in the UI.
-+DROP POLICY IF EXISTS "logs read by staff" ON public.activity_logs;
-+CREATE POLICY "logs read scoped by role" ON public.activity_logs FOR SELECT TO authenticated
-+  USING (store_id = public.my_store_id() AND (public.is_owner() OR actor_id = auth.uid()));
-diff --git a/supabase/migrations/20260803000200_public_product_photos.sql b/supabase/migrations/20260803000200_public_product_photos.sql
-new file mode 100644
---- /dev/null
-+++ b/supabase/migrations/20260803000200_public_product_photos.sql
-@@ -0,0 +1,30 @@
-+-- The product-photos bucket was never created, which is why uploading a
-+-- product image failed with "Bucket not found". It is public so menu images
-+-- can be cached by the CDN and shown to guests without a signed URL.
-+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-+VALUES (
-+  'product-photos',
-+  'product-photos',
-+  true,
-+  5242880,
-+  ARRAY['image/jpeg','image/png','image/webp']
-+)
-+ON CONFLICT (id) DO UPDATE
-+  SET public = true,
-+      file_size_limit = EXCLUDED.file_size_limit,
-+      allowed_mime_types = EXCLUDED.allowed_mime_types;
-+
-+-- Anyone may read a menu photo; only the owner of that store may change one.
-+DROP POLICY IF EXISTS "store staff read product photos" ON storage.objects;
-+DROP POLICY IF EXISTS "cashier uploads product photos" ON storage.objects;
-+DROP POLICY IF EXISTS "cashier updates product photos" ON storage.objects;
-+DROP POLICY IF EXISTS "cashier deletes product photos" ON storage.objects;
-+
-+CREATE POLICY "public read product photos" ON storage.objects FOR SELECT
-+  USING (bucket_id = 'product-photos');
-+CREATE POLICY "owner uploads product photos" ON storage.objects FOR INSERT TO authenticated
-+  WITH CHECK (bucket_id = 'product-photos' AND public.is_owner() AND (storage.foldername(name))[1] = public.my_store_id()::text);
-+CREATE POLICY "owner updates product photos" ON storage.objects FOR UPDATE TO authenticated
-+  USING (bucket_id = 'product-photos' AND public.is_owner() AND (storage.foldername(name))[1] = public.my_store_id()::text);
-+CREATE POLICY "owner deletes product photos" ON storage.objects FOR DELETE TO authenticated
-+  USING (bucket_id = 'product-photos' AND public.is_owner() AND (storage.foldername(name))[1] = public.my_store_id()::text);
++comment on column public.stores.event_spend is
++  'Order total that unlocks the counter event discount. 0 = disabled.';
++comment on column public.orders.special_discount is
++  'Manual event discount added at the counter, already folded into discount_total.';

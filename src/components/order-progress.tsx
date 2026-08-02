@@ -13,13 +13,14 @@ export const ORDER_STEPS = [
 
 export type OrderStep = (typeof ORDER_STEPS)[number];
 
+/** Steps borrow the status wording so the rail and the pill always agree. */
 const STEP_LABEL: Record<OrderStep, string> = {
-  submitted: "step_submitted",
-  approved: "step_paid",
-  preparing: "step_preparing",
-  kitchen_done: "step_ready",
-  received: "step_received",
-  completed: "step_completed",
+  submitted: "st_submitted",
+  approved: "st_approved",
+  preparing: "st_preparing",
+  kitchen_done: "st_kitchen_done",
+  received: "st_received",
+  completed: "st_completed",
 };
 
 export function OrderProgress({

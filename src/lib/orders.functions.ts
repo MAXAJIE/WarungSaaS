@@ -9,6 +9,8 @@ import {
   findOrderByCodeImpl,
   listOrdersImpl,
   setGiftImpl,
+  setSpecialDiscountImpl,
+  type CounterItemInput,
 } from "./orders.server";
 import { analyticsImpl } from "./analytics.server";
 
@@ -18,9 +20,7 @@ export const listOrders = createServerFn({ method: "GET" })
 
 export const createWalkInOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator(
-    (d: { customer_name: string; note?: string; items: { product_id: string; qty: number }[] }) => d,
-  )
+  .inputValidator((d: { customer_name: string; note?: string; items: CounterItemInput[] }) => d)
   .handler(async ({ context, data }) => createWalkInImpl(context, data));
 
 export const findOrderByCode = createServerFn({ method: "POST" })
@@ -47,6 +47,11 @@ export const advanceOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: { orderId: string; action: "start" | "kitchen_done" | "receive" | "complete" }) => d)
   .handler(async ({ context, data }) => advanceOrderImpl(context, data));
+
+export const setSpecialDiscount = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { orderId: string; amount: number; reason: string }) => d)
+  .handler(async ({ context, data }) => setSpecialDiscountImpl(context, data));
 
 export const cancelOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

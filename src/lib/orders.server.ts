@@ -85,9 +85,24 @@ export async function listOrdersImpl(ctx: AuthedCtx) {
   return { role: member.role, roles, store, orders: data ?? [] };
 }
 
+export type CounterItemInput = {
+  product_id: string;
+  qty: number;
+  /** Customisations the waiter picked for the guest. */
+  options?: Array<{ option_id: string; value_id: string }>;
+};
+
+type CounterOptionJoin = {
+  id: string;
+  label: string;
+  price_delta: number | string;
+  option_id: string;
+  product_options: { name: string; product_id: string } | null;
+};
+
 export async function createWalkInImpl(
   ctx: AuthedCtx,
-  data: { customer_name: string; note?: string; items: { product_id: string; qty: number }[] },
+  data: { customer_name: string; note?: string; items: CounterItemInput[] },
 ) {
   const { store, member } = await requireCashier(ctx);
   if (!data.items.length) throw new Error("Add at least one item.");
@@ -118,17 +133,40 @@ export async function createWalkInImpl(
     .single();
   if (error) throw new Error(error.message);
 
+  // Add-on prices are resolved here, never trusted from the counter screen.
+  const chosenValueIds = Array.from(
+    new Set(data.items.flatMap((i) => (i.options ?? []).map((o) => o.value_id))),
+  );
+  const { data: optionValues } = chosenValueIds.length
+    ? await supabaseAdmin
+        .from("product_option_values")
+        .select("id,label,price_delta,option_id,product_options(name,product_id)")
+        .in("id", chosenValueIds)
+    : { data: [] as CounterOptionJoin[] };
+
   const rows = data.items.flatMap((i) => {
     const p = (products ?? []).find((x) => x.id === i.product_id);
     if (!p) return [];
+    const picked = (i.options ?? []).flatMap((sel) => {
+      const v = ((optionValues ?? []) as CounterOptionJoin[]).find(
+        (x) => x.id === sel.value_id && x.product_options?.product_id === p.id,
+      );
+      return v
+        ? [{ name: v.product_options?.name ?? "", label: v.label, price_delta: Number(v.price_delta) }]
+        : [];
+    });
+    const addOn = picked.reduce((sum, o) => sum + o.price_delta, 0);
     return [
       {
         order_id: order.id,
         product_id: p.id,
-        name_snapshot: p.name,
-        unit_price: p.sell_price,
+        name_snapshot: picked.length
+          ? `${p.name} (${picked.map((o) => o.label).join(", ")})`
+          : p.name,
+        unit_price: Number(p.sell_price) + addOn,
         unit_cost: p.cost_price,
         qty: Math.max(1, i.qty),
+        options: picked as never,
       },
     ];
   });
@@ -346,7 +384,7 @@ const TRANSITIONS: Record<
   kitchen_done: {
     from: ["preparing", "approved"],
     to: "kitchen_done",
-    roles: ["pickup", "kitchen", "owner"],
+    roles: ["pickup", "kitchen", "cashier", "owner"],
     stamp: "ready_at",
   },
   receive: { from: ["kitchen_done"], to: "received", roles: ["pickup", "owner"] },
@@ -414,6 +452,52 @@ export async function advanceOrderImpl(
       exceptUserId: ctx.userId,
     });
   }
+  return loadFullOrder(order.id);
+}
+
+/**
+ * Event discount: the counter may knock an amount off a ticket that reached the
+ * store's event spend, and must say why. Both numbers are validated here so the
+ * browser can never invent a discount.
+ */
+export async function setSpecialDiscountImpl(
+  ctx: AuthedCtx,
+  data: { orderId: string; amount: number; reason: string },
+) {
+  const { store, member, roles } = await requireCashier(ctx);
+  const { data: order } = await supabaseAdmin
+    .from("orders")
+    .select("*")
+    .eq("id", data.orderId)
+    .eq("store_id", store.id)
+    .maybeSingle();
+  if (!order) throw new Error("Order not found.");
+  if (order.status !== "submitted")
+    throw new Error("A discount can only be added before payment is approved.");
+
+  const threshold = Number((store as { event_spend?: number | string }).event_spend ?? 0);
+  if (threshold <= 0) throw new Error("No event discount is running.");
+  if (Number(order.subtotal) < threshold)
+    throw new Error("This order has not reached the event spend yet.");
+
+  const amount = Math.max(0, Math.min(Number(order.subtotal), Number(data.amount) || 0));
+  const reason = (data.reason ?? "").trim().slice(0, 120);
+  if (amount > 0 && !reason) throw new Error("Please give a reason for the discount.");
+
+  await supabaseAdmin
+    .from("orders")
+    .update({ special_discount: amount, special_discount_reason: reason } as never)
+    .eq("id", order.id);
+  await recomputeOrder(order.id);
+  await logAction({
+    storeId: store.id,
+    actorId: ctx.userId,
+    actorLabel: member.display_name,
+    orderId: order.id,
+    actorRole: roles.includes("owner") ? "owner" : "cashier",
+    action: "order.special_discount",
+    detail: { amount, reason },
+  });
   return loadFullOrder(order.id);
 }
 

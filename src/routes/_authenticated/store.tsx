@@ -41,10 +41,17 @@ function StorePage() {
   const [threshold, setThreshold] = useState(0);
   const [disclaimer, setDisclaimer] = useState("");
   const [open, setOpen] = useState(true);
+  const [template, setTemplate] = useState("{STALL}-{SEQ}");
+  const [eventSpend, setEventSpend] = useState(0);
 
   const store = me.data?.store;
-  const role = me.data?.member?.role ?? null;
-  const isCashier = role === "cashier";
+  const roles = (me.data?.roles?.length
+    ? me.data.roles
+    : me.data?.member
+      ? [me.data.member.role]
+      : []) as string[];
+  // Store settings belong to the owner, whatever other hats they also wear.
+  const isOwner = roles.includes("owner");
 
   useEffect(() => {
     if (!store) return;
@@ -54,6 +61,8 @@ function StorePage() {
     setThreshold(Number(store.gift_threshold ?? 0));
     setDisclaimer(store.disclaimer ?? "");
     setOpen(!!store.is_open);
+    setTemplate(store.order_code_template ?? "{STALL}-{SEQ}");
+    setEventSpend(Number((store as { event_spend?: number }).event_spend ?? 0));
   }, [store]);
 
   const storeMutation = useMutation({
@@ -66,6 +75,8 @@ function StorePage() {
           gift_threshold: threshold,
           disclaimer,
           is_open: open,
+          order_code_template: template,
+          event_spend: eventSpend,
         },
       }),
     onSuccess: () => {
@@ -76,7 +87,7 @@ function StorePage() {
   });
 
   return (
-    <StaffShell title={t("nav_store")} role={role} storeName={store?.name ?? null}>
+    <StaffShell title={t("nav_store")} roles={roles as never} storeName={store?.name ?? null}>
       <div className="mx-auto max-w-2xl space-y-6 py-2">
         <section className="cozy-card p-6">
           <div className="flex items-center gap-3">
@@ -98,7 +109,7 @@ function StorePage() {
             </div>
           </div>
 
-          {!isCashier ? (
+          {!isOwner ? (
             <p className="mt-5 rounded-2xl bg-muted/50 p-4 text-sm text-muted-foreground">
               {t("owner_only")}
             </p>
@@ -151,6 +162,38 @@ function StorePage() {
                     onChange={(e) => setThreshold(Number(e.target.value))}
                     className={`mt-1 ${inputClass}`}
                   />
+                </label>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    {t("order_code_template")}
+                  </span>
+                  <input
+                    value={template}
+                    onChange={(e) => setTemplate(e.target.value)}
+                    className={`mt-1 ${inputClass}`}
+                  />
+                  <span className="mt-1 block text-[11px] text-muted-foreground">
+                    {t("order_code_template_hint")}
+                  </span>
+                </label>
+                <label className="block">
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    {t("event_spend")} (RM)
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={eventSpend}
+                    onChange={(e) => setEventSpend(Number(e.target.value))}
+                    className={`mt-1 ${inputClass}`}
+                  />
+                  <span className="mt-1 block text-[11px] text-muted-foreground">
+                    {t("event_spend_hint")}
+                  </span>
                 </label>
               </div>
 

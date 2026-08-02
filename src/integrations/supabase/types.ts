@@ -371,6 +371,8 @@ export type Database = {
           ready_at: string | null
           received_at: string | null
           source: string
+          special_discount: number
+          special_discount_reason: string
           status: Database["public"]["Enums"]["order_status"]
           store_id: string
           submitted_at: string | null
@@ -397,6 +399,8 @@ export type Database = {
           ready_at?: string | null
           received_at?: string | null
           source?: string
+          special_discount?: number
+          special_discount_reason?: string
           status?: Database["public"]["Enums"]["order_status"]
           store_id: string
           submitted_at?: string | null
@@ -423,6 +427,8 @@ export type Database = {
           ready_at?: string | null
           received_at?: string | null
           source?: string
+          special_discount?: number
+          special_discount_reason?: string
           status?: Database["public"]["Enums"]["order_status"]
           store_id?: string
           submitted_at?: string | null
@@ -742,6 +748,7 @@ export type Database = {
           created_at: string
           currency: string
           disclaimer: string
+          event_spend: number
           gift_threshold: number
           id: string
           is_open: boolean
@@ -757,6 +764,7 @@ export type Database = {
           created_at?: string
           currency?: string
           disclaimer?: string
+          event_spend?: number
           gift_threshold?: number
           id?: string
           is_open?: boolean
@@ -772,6 +780,7 @@ export type Database = {
           created_at?: string
           currency?: string
           disclaimer?: string
+          event_spend?: number
           gift_threshold?: number
           id?: string
           is_open?: boolean

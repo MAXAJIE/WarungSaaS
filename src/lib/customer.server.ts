@@ -365,7 +365,7 @@ export async function getGuestOrderImpl(data: { guestToken: string }) {
 export async function confirmReceiptImpl(data: { guestToken: string }) {
   const order = await loadGuestOrder(data.guestToken);
   if (!order) throw new Error("GONE");
-  if (order.status !== "kitchen_done") throw new Error("NOT_READY");
+  if (!["kitchen_done", "received"].includes(order.status)) throw new Error("NOT_READY");
   const now = new Date().toISOString();
   await supabaseAdmin
     .from("orders")

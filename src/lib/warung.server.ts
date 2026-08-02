@@ -177,6 +177,10 @@ export async function recomputeOrder(orderId: string) {
         ? (subtotal * Number(voucher.value)) / 100
         : Math.min(subtotal, Number(voucher.value));
   }
+  // An event discount is a manual, reason-tagged reduction the counter may add
+  // once the ticket clears the store's event spend threshold.
+  const special = Math.max(0, Number((order as { special_discount?: number | string }).special_discount ?? 0));
+  discount += special;
   const total = Math.max(0, subtotal - discount);
 
   const { data: updated } = await supabaseAdmin

@@ -181,14 +181,16 @@ export async function updateStoreImpl(
     is_open?: boolean;
     /** Pickup-number template, e.g. "{STALL}-{SEQ}". */
     order_code_template?: string;
+    /** Spend that unlocks the counter's event discount. 0 disables it. */
+    event_spend?: number;
   },
 ) {
   const { store, member } = await requireOwner(ctx);
   if (data.order_code_template !== undefined)
     data.order_code_template = normaliseOrderTemplate(data.order_code_template);
-  const { data: updated, error } = await ctx.supabase
+  const { data: updated, error } = await supabaseAdmin
     .from("stores")
-    .update(data)
+    .update(data as never)
     .eq("id", store.id)
     .select("*")
     .single();
@@ -567,7 +569,26 @@ export async function setMemberGroupImpl(
   data: { memberId: string; group_id: string | null },
 ) {
   const { store, member } = await requireCashier(ctx);
-  const { error } = await ctx.supabase
+  // Row-level security lets a member edit only their own row, so moving
+  // somebody else between compartments runs through the admin client after the
+  // caller has been checked and the target confirmed to be in the same store.
+  const { data: target } = await supabaseAdmin
+    .from("store_members")
+    .select("id,store_id")
+    .eq("id", data.memberId)
+    .eq("store_id", store.id)
+    .maybeSingle();
+  if (!target) throw new Error("Person not found in your store.");
+  if (data.group_id) {
+    const { data: group } = await supabaseAdmin
+      .from("kitchen_groups")
+      .select("id")
+      .eq("id", data.group_id)
+      .eq("store_id", store.id)
+      .maybeSingle();
+    if (!group) throw new Error("That compartment does not exist.");
+  }
+  const { error } = await supabaseAdmin
     .from("store_members")
     .update({ group_id: data.group_id })
     .eq("id", data.memberId)

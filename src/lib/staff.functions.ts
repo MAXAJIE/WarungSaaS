@@ -63,6 +63,7 @@ export const updateStore = createServerFn({ method: "POST" })
       disclaimer?: string;
       is_open?: boolean;
       order_code_template?: string;
+      event_spend?: number;
     }) => d,
   )
   .handler(async ({ context, data }) => updateStoreImpl(context, data));
