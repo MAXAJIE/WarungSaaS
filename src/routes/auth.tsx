@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { LogIn, Soup } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
+import { signInWithGoogle } from "@/lib/google-auth";
 import { useI18n } from "@/lib/i18n";
 import { LanguageSwitcher } from "@/components/language-switcher";
 
@@ -68,15 +68,18 @@ function AuthPage() {
   }
 
   async function google() {
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
-    });
-    if (result.error) {
-      toast.error("Google sign-in failed. Try email instead.");
-      return;
-    }
-    if (result.redirected) return;
-    navigate({ to: "/dashboard", replace: true });
+    setBusy(true);
+    try {
+      const result = await signInWithGoogle();
+      if (result.error) {
+        toast.error(result.error.message || "Google sign-in failed. Try email instead.");
+        return;
+      }
+      if (result.redirected) return;
+      navigate({ to: "/dashboard", replace: true });
+    } finally {
+      setBusy(false);
+     }
   }
 
   return (
@@ -101,6 +104,7 @@ function AuthPage() {
           <button
             type="button"
             onClick={google}
+            disabled={busy}
             className="soft-press mt-6 flex w-full items-center justify-center gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm font-semibold"
           >
             <svg viewBox="0 0 24 24" className="size-4" aria-hidden>

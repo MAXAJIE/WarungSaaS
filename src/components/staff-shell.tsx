@@ -65,17 +65,17 @@ function RailButton({
   children: ReactNode;
 }) {
   const base =
-    "group/link relative flex h-11 w-11 items-center justify-center rounded-2xl transition-all duration-200 ease-out";
+    "group/link relative flex h-11 w-11 items-center justify-center rounded-xl transition-all duration-200 ease-out";
   const state = active
-    ? "bg-primary text-primary-foreground shadow-lift"
+    ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
     : danger
-      ? "text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
-      : "text-muted-foreground hover:bg-muted hover:text-foreground";
+      ? "text-sidebar-foreground/60 hover:bg-destructive/15 hover:text-destructive"
+      : "text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
 
   const inner = (
     <>
       {active && (
-        <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-primary" />
+        <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-sidebar-primary" />
       )}
       <span className="relative transition-transform duration-200 ease-out group-hover/link:scale-110">
         {children}
@@ -153,14 +153,17 @@ export function StaffShell({
   });
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div
+      className="min-h-screen bg-background text-foreground"
+      style={{ ["--rail" as string]: RAIL }}
+    >
       <aside
-        className="fixed inset-y-0 left-0 z-40 hidden flex-col items-center border-r border-border bg-card/60 backdrop-blur md:flex"
+        className="fixed inset-y-0 left-0 z-40 hidden flex-col items-center border-r border-sidebar-border bg-sidebar md:flex"
         style={{ width: RAIL }}
       >
-        <div className="flex w-full items-center justify-center border-b border-border py-4">
-          <span className="grid size-10 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lift transition-transform duration-200 hover:scale-105">
-            <Soup className="size-5" />
+        <div className="flex w-full items-center justify-center border-b border-sidebar-border py-4">
+          <span className="grid size-9 place-items-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground shadow-sm transition-transform duration-200 hover:scale-105">
+            <Soup className="size-[18px]" />
           </span>
         </div>
 
@@ -172,7 +175,7 @@ export function StaffShell({
           ))}
         </nav>
 
-        <div className="flex w-full flex-col items-center gap-1.5 border-t border-border p-2">
+        <div className="flex w-full flex-col items-center gap-1.5 border-t border-sidebar-border p-2">
           <RailButton label={t("sign_out")} onClick={() => setConfirmOut(true)} danger>
             <LogOut className="size-[18px]" />
           </RailButton>
@@ -180,10 +183,10 @@ export function StaffShell({
       </aside>
 
       <div className="md:pl-[72px]">
-        <header className="sticky top-0 z-30 border-b border-border/70 bg-background/85 backdrop-blur">
-          <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
+        <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur">
+          <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
             <div className="min-w-0 flex-1">
-              <p className="truncate font-display text-lg font-bold leading-tight">{title}</p>
+              <p className="truncate font-display text-lg font-semibold leading-tight">{title}</p>
               <p className="truncate text-xs text-muted-foreground">
                 {storeName ?? t("app_name")}
                 {role ? ` · ${t(`role_${role}`)}` : ""}
@@ -194,22 +197,22 @@ export function StaffShell({
             <button
               type="button"
               onClick={() => setConfirmOut(true)}
-              className="soft-press grid size-10 place-items-center rounded-2xl border border-border bg-card md:hidden"
+              className="soft-press grid size-10 place-items-center rounded-xl border border-border bg-card md:hidden"
               aria-label={t("sign_out")}
             >
               <LogOut className="size-4" />
             </button>
           </div>
 
-          <nav className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-4 pb-2 md:hidden">
+          <nav className="mx-auto flex max-w-6xl gap-1 overflow-x-auto border-t border-border px-3 py-2 md:hidden">
             {items.map((i) => (
               <Link
                 key={i.to}
                 to={i.to}
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
                   pathname === i.to
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted"
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                 }`}
               >
                 <i.icon className="size-3.5" />

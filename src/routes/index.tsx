@@ -1,6 +1,18 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ArrowRight, QrCode, ScanLine, Soup, Store, Utensils } from "lucide-react";
+import {
+  ArrowRight,
+  BadgePercent,
+  ChefHat,
+  HandCoins,
+  LineChart,
+  QrCode,
+  ScanLine,
+  Smartphone,
+  Soup,
+  Store,
+  Utensils,
+} from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { supabase } from "@/integrations/supabase/client";
@@ -134,6 +146,111 @@ function Landing() {
           ))}
         </section>
 
+
+        <section className="mt-16">
+          <h2 className="text-center font-display text-3xl font-bold">How it works</h2>
+          <p className="mx-auto mt-2 max-w-lg text-center text-sm text-muted-foreground">
+            Three steps from an empty table to a handed-over bag.
+          </p>
+          <ol className="mt-8 grid gap-4 md:grid-cols-3">
+            {[
+              {
+                icon: Smartphone,
+                step: "01",
+                title: "Customer scans & orders",
+                body: "Your stall gets a public menu link and QR. Guests pick items on their own phone — no app install, no account.",
+              },
+              {
+                icon: HandCoins,
+                step: "02",
+                title: "Counter approves payment",
+                body: "The cashier scans the 15-minute order QR, applies vouchers or gifts, collects cash or e-wallet, then approves.",
+              },
+              {
+                icon: ChefHat,
+                step: "03",
+                title: "Kitchen cooks, pickup hands over",
+                body: "Approved orders appear on the kitchen board. When cooking is done, pickup confirms the handover and the queue clears.",
+              },
+            ].map((s2) => (
+              <li key={s2.step} className="cozy-card p-6">
+                <div className="flex items-center justify-between">
+                  <span className="grid size-10 place-items-center rounded-2xl bg-secondary text-secondary-foreground">
+                    <s2.icon className="size-5" />
+                  </span>
+                  <span className="font-display text-2xl font-bold text-muted-foreground/50">
+                    {s2.step}
+                  </span>
+                </div>
+                <h3 className="mt-4 font-display text-lg font-bold">{s2.title}</h3>
+                <p className="mt-1 text-sm text-muted-foreground">{s2.body}</p>
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <section className="mt-16 grid gap-4 md:grid-cols-3">
+          {[
+            {
+              icon: BadgePercent,
+              title: "Vouchers & lucky-draw gifts",
+              body: "Percent or fixed discounts with your own codes, plus optional gift draws to bring regulars back.",
+            },
+            {
+              icon: LineChart,
+              title: "Profit, not just sales",
+              body: "Track cost price per item so every report shows real margin in MYR — daily, weekly and per product.",
+            },
+            {
+              icon: Utensils,
+              title: "Roles that stay simple",
+              body: "Cashier, kitchen and pickup each see only their own screen, in English, 中文 or Melayu.",
+            },
+          ].map((c) => (
+            <article key={c.title} className="cozy-card p-5">
+              <span className="grid size-10 place-items-center rounded-2xl bg-accent text-accent-foreground">
+                <c.icon className="size-5" />
+              </span>
+              <h3 className="mt-4 font-display text-lg font-bold">{c.title}</h3>
+              <p className="mt-1 text-sm text-muted-foreground">{c.body}</p>
+            </article>
+          ))}
+        </section>
+
+        <section className="mt-16">
+          <h2 className="text-center font-display text-3xl font-bold">Questions</h2>
+          <div className="mx-auto mt-6 max-w-2xl divide-y divide-border overflow-hidden rounded-3xl border border-border bg-card">
+            {[
+              {
+                q: "Do my customers need to install anything?",
+                a: "No. They scan the QR, the menu opens in their browser, and the order QR lives on the same page.",
+              },
+              {
+                q: "Can I still take walk-in orders at the counter?",
+                a: "Yes. The cashier screen can build an order from scratch, exactly like a normal POS.",
+              },
+              {
+                q: "What happens if the kitchen device sleeps?",
+                a: "Boards refresh live, and shared devices sign out automatically after 20 idle minutes for safety.",
+              },
+              {
+                q: "How do I add my crew?",
+                a: "Create the store as owner, then invite kitchen and pickup staff with a one-time code from the People page.",
+              },
+            ].map((f) => (
+              <details key={f.q} className="group px-5 py-4">
+                <summary className="cursor-pointer list-none font-semibold marker:hidden">
+                  <span className="flex items-center justify-between gap-3">
+                    {f.q}
+                    <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+                  </span>
+                </summary>
+                <p className="mt-2 text-sm text-muted-foreground">{f.a}</p>
+              </details>
+            ))}
+          </div>
+        </section>
+
         <section className="cozy-card mt-14 flex flex-col items-center gap-4 p-8 text-center">
           <h2 className="font-display text-2xl font-bold">{t("create_store")}</h2>
           <p className="max-w-lg text-sm text-muted-foreground">
@@ -148,6 +265,25 @@ function Landing() {
           </Link>
         </section>
       </main>
+
+      <footer className="border-t border-border">
+        <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-3 px-4 py-8 sm:flex-row">
+          <span className="inline-flex items-center gap-2 text-sm font-semibold">
+            <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
+              <Soup className="size-4" />
+            </span>
+            {t("app_name")}
+          </span>
+          <div className="flex items-center gap-4 text-sm text-muted-foreground">
+            <Link to="/auth" className="hover:text-foreground">
+              {t("sign_in")}
+            </Link>
+            <span className="sm:hidden">
+              <LanguageSwitcher compact />
+            </span>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

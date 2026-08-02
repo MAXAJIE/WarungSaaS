@@ -1,3 +1,37 @@
+-- EXTENSIONS
+-- pgcrypto provides gen_random_bytes(). It is not installed by default on every
+-- Postgres/Supabase project, which made this migration fail with
+--   ERROR: function gen_random_bytes(integer) does not exist (SQLSTATE 42883)
+-- Try to install it, but never let a missing privilege abort the migration.
+DO $do$
+BEGIN
+  CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
+EXCEPTION
+  WHEN insufficient_privilege OR invalid_schema_name OR undefined_file THEN
+    BEGIN
+      CREATE EXTENSION IF NOT EXISTS pgcrypto;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE NOTICE 'pgcrypto unavailable, falling back to gen_random_uuid()';
+    END;
+END
+$do$;
+
+-- Random token helper that works with OR without pgcrypto.
+CREATE OR REPLACE FUNCTION public.new_random_token()
+RETURNS TEXT
+LANGUAGE plpgsql
+VOLATILE
+SET search_path = public, extensions, pg_catalog
+AS $fn$
+BEGIN
+  RETURN encode(gen_random_bytes(16), 'hex');
+EXCEPTION
+  WHEN undefined_function THEN
+    RETURN replace(gen_random_uuid()::text, '-', '');
+END;
+$fn$;
+GRANT EXECUTE ON FUNCTION public.new_random_token() TO authenticated, anon, service_role;
+
 -- ENUMS
 CREATE TYPE public.staff_role AS ENUM ('cashier','kitchen','pickup');
 CREATE TYPE public.order_status AS ENUM ('cart','submitted','approved','preparing','kitchen_done','received','completed','cancelled');
@@ -193,7 +227,7 @@ CREATE TABLE public.orders (
   cost_total NUMERIC(10,2) NOT NULL DEFAULT 0,
   voucher_id UUID REFERENCES public.vouchers(id) ON DELETE SET NULL,
   gift_id UUID REFERENCES public.gifts(id) ON DELETE SET NULL,
-  guest_token TEXT NOT NULL DEFAULT encode(gen_random_bytes(16),'hex'),
+  guest_token TEXT NOT NULL DEFAULT public.new_random_token(),
   qr_token TEXT,
   qr_expires_at TIMESTAMPTZ,
   submitted_at TIMESTAMPTZ,
