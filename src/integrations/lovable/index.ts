@@ -9,6 +9,8 @@ type SignInOptions = {
   extraParams?: Record<string, string>;
 };
 
+
+
 export const lovable = {
   auth: {
     signInWithOAuth: async (
