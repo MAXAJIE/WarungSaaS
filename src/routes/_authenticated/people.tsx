@@ -71,7 +71,7 @@ function PeoplePage() {
   return (
     <StaffShell
       title={t("nav_people")}
-      role={me.data?.member?.role ?? null}
+      roles={(me.data?.roles?.length ? me.data.roles : me.data?.member ? [me.data.member.role] : []) as never}
       storeName={me.data?.store?.name ?? null}
     >
       {people.isLoading ? (

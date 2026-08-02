@@ -5,6 +5,7 @@ import {
   getMenuImpl,
   saveCartImpl,
   submitOrderImpl,
+  confirmReceiptImpl,
   type CartItemInput,
 } from "./customer.server";
 
@@ -17,7 +18,6 @@ export const saveCart = createServerFn({ method: "POST" })
     (d: {
       slug: string;
       guestToken?: string | null;
-      customerName: string;
       note?: string;
       items: CartItemInput[];
     }) => d,
@@ -35,3 +35,7 @@ export const getGuestOrder = createServerFn({ method: "POST" })
 export const cancelGuestOrder = createServerFn({ method: "POST" })
   .inputValidator((d: { guestToken: string }) => d)
   .handler(async ({ data }) => cancelGuestOrderImpl(data));
+
+export const confirmReceipt = createServerFn({ method: "POST" })
+  .inputValidator((d: { guestToken: string }) => d)
+  .handler(async ({ data }) => confirmReceiptImpl(data));

@@ -89,7 +89,7 @@ function PromosPage() {
   return (
     <StaffShell
       title={t("nav_promos")}
-      role={me.data?.member?.role ?? null}
+      roles={(me.data?.roles?.length ? me.data.roles : me.data?.member ? [me.data.member.role] : []) as never}
       storeName={me.data?.store?.name ?? null}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">

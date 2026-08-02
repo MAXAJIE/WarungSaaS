@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireMember, type AuthedCtx } from "./warung.server";
 
-export type StaffRole = "cashier" | "kitchen" | "pickup";
+export type StaffRole = "owner" | "cashier" | "kitchen" | "pickup";
 
 export type NotificationRow = {
   id: string;
@@ -26,17 +26,32 @@ export async function notifyStore(args: {
   groupIds?: string[] | null;
   exceptUserId?: string | null;
 }) {
+  // Match on the full role set, not just the primary role, so an owner who
+  // also wears the kitchen hat still gets kitchen alerts.
   const { data: members } = await supabaseAdmin
     .from("store_members")
-    .select("user_id, role, group_id")
-    .eq("store_id", args.storeId)
-    .in("role", args.roles);
+    .select("id, user_id, role, group_id")
+    .eq("store_id", args.storeId);
+  const { data: roleRows } = await supabaseAdmin
+    .from("member_roles")
+    .select("member_id, role")
+    .eq("store_id", args.storeId);
+
+  const rolesFor = (memberId: string, primary: string) =>
+    new Set<string>([
+      primary,
+      ...(roleRows ?? []).filter((r) => r.member_id === memberId).map((r) => r.role),
+    ]);
 
   const groupIds = args.groupIds?.filter(Boolean) ?? [];
   const targets = (members ?? []).filter((m) => {
     if (args.exceptUserId && m.user_id === args.exceptUserId) return false;
+    const held = rolesFor(m.id, m.role);
+    if (!args.roles.some((r) => held.has(r))) return false;
     if (!groupIds.length) return true;
-    if (m.role !== "kitchen") return true;
+    // Compartment scoping only narrows cooks; pickup always hears about a
+    // ticket because pickup is responsible for every compartment.
+    if (!held.has("kitchen") || held.has("pickup") || held.has("owner")) return true;
     return !m.group_id || groupIds.includes(m.group_id);
   });
   if (!targets.length) return;

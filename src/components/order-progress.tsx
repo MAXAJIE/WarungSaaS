@@ -41,7 +41,8 @@ export function OrderProgress({
   const current = index < 0 ? 0 : index;
 
   return (
-    <ol className="flex w-full items-start gap-1" aria-label={t("order_progress")}>
+    <div className="w-full">
+    <ol className="flex w-full items-start gap-0" aria-label={t("order_progress")}>
       {ORDER_STEPS.map((step, i) => {
         const done = i < current;
         const active = i === current;
@@ -71,8 +72,10 @@ export function OrderProgress({
               />
             </div>
             {!compact && (
+              // Six labels never fit side by side on a phone, so below `sm`
+              // only the current step is named, underneath the rail.
               <span
-                className={`text-center text-[10px] font-semibold leading-tight ${
+                className={`hidden w-full break-words px-0.5 text-center text-[10px] font-semibold leading-tight sm:block ${
                   active ? "text-primary" : "text-muted-foreground"
                 }`}
               >
@@ -83,5 +86,11 @@ export function OrderProgress({
         );
       })}
     </ol>
+      {!compact && (
+        <p className="mt-1.5 text-center text-[11px] font-semibold text-primary sm:hidden">
+          {t(STEP_LABEL[ORDER_STEPS[current]!])}
+        </p>
+      )}
+    </div>
   );
 }

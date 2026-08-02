@@ -6,14 +6,17 @@ import {
   randomToken,
   requireCashier,
   requireMember,
+  requireOwner,
   signPhoto,
   signPhotos,
-
+  sortRoles,
+  ASSIGNABLE_ROLES,
   type AuthedCtx,
+  type StoreRole,
 } from "./warung.server";
 import { notifyStore, notifyUser } from "./notifications.server";
 
-export type StaffRole = "cashier" | "kitchen" | "pickup";
+export type StaffRole = StoreRole;
 
 export type RoleRequest = {
   id: string;
@@ -58,6 +61,8 @@ export async function meImpl(ctx: AuthedCtx) {
   return {
     profile: profile ?? { id: ctx.userId, display_name: "", preferred_lang: "en" },
     member: membership?.member ?? null,
+    /** Every hat this person wears; the sidebar groups its links by these. */
+    roles: membership?.roles ?? [],
     store: membership?.store ?? null,
     group,
     roleRequest,
@@ -174,9 +179,13 @@ export async function updateStoreImpl(
     avg_prep_minutes?: number;
     disclaimer?: string;
     is_open?: boolean;
+    /** Pickup-number template, e.g. "{STALL}-{SEQ}". */
+    order_code_template?: string;
   },
 ) {
-  const { store, member } = await requireCashier(ctx);
+  const { store, member } = await requireOwner(ctx);
+  if (data.order_code_template !== undefined)
+    data.order_code_template = normaliseOrderTemplate(data.order_code_template);
   const { data: updated, error } = await ctx.supabase
     .from("stores")
     .update(data)
@@ -194,8 +203,30 @@ export async function updateStoreImpl(
   return updated;
 }
 
+/** Tokens the owner may use when composing a pickup number. */
+export const ORDER_CODE_TOKENS = ["{STALL}", "{DATE}", "{TIME}", "{SEQ}"] as const;
+
+/**
+ * A pickup number must stay short enough to shout across a counter: two or
+ * three compartments, and the running sequence is mandatory so no two tickets
+ * ever collide.
+ */
+export function normaliseOrderTemplate(raw: string) {
+  const template = raw.trim().toUpperCase();
+  if (!template) throw new Error("Give your order numbers a format.");
+  const parts = template.split("-").filter(Boolean);
+  if (parts.length < 2 || parts.length > 3)
+    throw new Error("Use between 2 and 3 parts, separated by dashes.");
+  const unknown = template
+    .match(/\{[A-Z]+\}/g)
+    ?.filter((t) => !ORDER_CODE_TOKENS.includes(t as (typeof ORDER_CODE_TOKENS)[number]));
+  if (unknown?.length) throw new Error(`Unknown tag ${unknown[0]}.`);
+  if (!template.includes("{SEQ}")) throw new Error("Include {SEQ} so every number is unique.");
+  return template;
+}
+
 export async function listPeopleImpl(ctx: AuthedCtx) {
-  const { store, member } = await requireMember(ctx);
+  const { store, roles } = await requireMember(ctx);
   const { data: members } = await ctx.supabase
     .from("store_members")
     .select("*")
@@ -209,7 +240,7 @@ export async function listPeopleImpl(ctx: AuthedCtx) {
     created_at: string;
   };
   let invites: Invite[] = [];
-  if (member.role === "cashier") {
+  if (roles.includes("owner")) {
     const { data } = await ctx.supabase
       .from("store_invites")
       .select("*")
@@ -230,17 +261,32 @@ export async function listPeopleImpl(ctx: AuthedCtx) {
     .eq("store_id", store.id)
     .eq("status", "pending")
     .order("created_at", { ascending: false });
+  const { data: extraRoles } = await ctx.supabase
+    .from("member_roles")
+    .select("member_id,role")
+    .eq("store_id", store.id);
+  const withRoles = (members ?? []).map((m) => ({
+    ...m,
+    roles: sortRoles([
+      ...((extraRoles ?? [])
+        .filter((r) => r.member_id === m.id)
+        .map((r) => r.role) as StoreRole[]),
+      m.role as StoreRole,
+    ]),
+  }));
   return {
-    members: members ?? [],
+    members: withRoles,
     invites,
     groups: groups ?? [],
     requests: (requests ?? []) as RoleRequest[],
     ownerId: store.owner_id,
+    myRoles: roles,
+    assignableRoles: ASSIGNABLE_ROLES,
   };
 }
 
 export async function createInviteImpl(ctx: AuthedCtx, data: { role: StaffRole }) {
-  const { store, member } = await requireCashier(ctx);
+  const { store, member } = await requireOwner(ctx);
   const code = `${data.role.slice(0, 3).toUpperCase()}-${randomCode(6)}`;
   const { data: invite, error } = await ctx.supabase
     .from("store_invites")
@@ -259,13 +305,13 @@ export async function createInviteImpl(ctx: AuthedCtx, data: { role: StaffRole }
 }
 
 export async function revokeInviteImpl(ctx: AuthedCtx, data: { id: string }) {
-  const { store } = await requireCashier(ctx);
+  const { store } = await requireOwner(ctx);
   await ctx.supabase.from("store_invites").delete().eq("id", data.id).eq("store_id", store.id);
   return { ok: true };
 }
 
 export async function kickMemberImpl(ctx: AuthedCtx, data: { memberId: string }) {
-  const { store, member } = await requireCashier(ctx);
+  const { store, member } = await requireOwner(ctx);
   const { data: target } = await ctx.supabase
     .from("store_members")
     .select("*")
@@ -408,7 +454,7 @@ export type ProductInput = {
 };
 
 export async function upsertProductImpl(ctx: AuthedCtx, data: ProductInput) {
-  const { store, member } = await requireCashier(ctx);
+  const { store, member } = await requireOwner(ctx);
   const { combo_items: comboItems, group_ids: groupIds, ...rest } = data;
   // The legacy single column keeps the first compartment so older reads still work.
   const payload = {
@@ -458,7 +504,7 @@ export async function upsertProductImpl(ctx: AuthedCtx, data: ProductInput) {
 }
 
 export async function reorderProductsImpl(ctx: AuthedCtx, data: { ids: string[] }) {
-  const { store } = await requireCashier(ctx);
+  const { store } = await requireOwner(ctx);
   await Promise.all(
     data.ids.map((id, index) =>
       ctx.supabase
@@ -488,7 +534,7 @@ export async function upsertGroupImpl(
   ctx: AuthedCtx,
   data: { id?: string; name: string; color?: string | null; sort_order?: number },
 ) {
-  const { store, member } = await requireCashier(ctx);
+  const { store, member } = await requireOwner(ctx);
   const payload = { ...data, name: data.name.trim(), store_id: store.id };
   const { data: saved, error } = data.id
     ? await ctx.supabase
@@ -511,7 +557,7 @@ export async function upsertGroupImpl(
 }
 
 export async function deleteGroupImpl(ctx: AuthedCtx, data: { id: string }) {
-  const { store } = await requireCashier(ctx);
+  const { store } = await requireOwner(ctx);
   await ctx.supabase.from("kitchen_groups").delete().eq("id", data.id).eq("store_id", store.id);
   return { ok: true };
 }
@@ -538,8 +584,149 @@ export async function setMemberGroupImpl(
 }
 
 
+/**
+ * The owner is the only person who can hand out hats, and everyone except the
+ * owner wears exactly one. Pickup duty always rides along with the owner set so
+ * a handover never gets stuck.
+ */
+export async function setMemberRolesImpl(
+  ctx: AuthedCtx,
+  data: { memberId: string; roles: StoreRole[] },
+) {
+  const { store, member } = await requireOwner(ctx);
+  const { data: target } = await ctx.supabase
+    .from("store_members")
+    .select("*")
+    .eq("id", data.memberId)
+    .eq("store_id", store.id)
+    .maybeSingle();
+  if (!target) throw new Error("Person not found in your store.");
+
+  let roles = sortRoles(data.roles.filter((r) => ASSIGNABLE_ROLES.includes(r)));
+  if (!roles.length) throw new Error("Pick at least one role.");
+  if (target.user_id === store.owner_id && !roles.includes("owner")) roles = sortRoles(["owner", ...roles]);
+  // Only the owner may wear several hats at once.
+  if (!roles.includes("owner") && roles.length > 1)
+    throw new Error("Only the owner can hold more than one role.");
+
+  const primary = roles[0]!;
+  const { error } = await ctx.supabase
+    .from("store_members")
+    .update({ role: primary })
+    .eq("id", data.memberId)
+    .eq("store_id", store.id);
+  if (error) throw new Error(error.message);
+
+  await supabaseAdmin.from("member_roles").delete().eq("member_id", data.memberId);
+  const extra = roles.slice(1).map((role) => ({
+    store_id: store.id,
+    member_id: data.memberId,
+    user_id: target.user_id,
+    role,
+  }));
+  if (extra.length) {
+    const { error: mrError } = await supabaseAdmin.from("member_roles").insert(extra as never);
+    if (mrError) throw new Error(mrError.message);
+  }
+
+  await logAction({
+    storeId: store.id,
+    actorId: ctx.userId,
+    actorLabel: member.display_name,
+    actorRole: "owner",
+    action: "member.roles_set",
+    detail: { person: target.display_name, roles },
+  });
+  return { ok: true, roles };
+}
+
+/* ---------------- product customisations ---------------- */
+
+export type ProductOptionInput = {
+  id?: string;
+  product_id: string;
+  name: string;
+  is_required?: boolean;
+  max_select?: number;
+  sort_order?: number;
+  values: Array<{ id?: string; label: string; price_delta: number; sort_order?: number }>;
+};
+
+export async function listProductOptionsImpl(ctx: AuthedCtx, data: { product_id: string }) {
+  const { store } = await requireMember(ctx);
+  const { data: options } = await ctx.supabase
+    .from("product_options")
+    .select("*")
+    .eq("store_id", store.id)
+    .eq("product_id", data.product_id)
+    .order("sort_order");
+  const ids = (options ?? []).map((o) => o.id);
+  const { data: values } = ids.length
+    ? await ctx.supabase
+        .from("product_option_values")
+        .select("*")
+        .in("option_id", ids)
+        .order("sort_order")
+    : { data: [] };
+  return (options ?? []).map((o) => ({
+    ...o,
+    values: (values ?? []).filter((v) => v.option_id === o.id),
+  }));
+}
+
+export async function upsertProductOptionImpl(ctx: AuthedCtx, data: ProductOptionInput) {
+  const { store, member } = await requireOwner(ctx);
+  const payload = {
+    store_id: store.id,
+    product_id: data.product_id,
+    name: data.name.trim(),
+    is_required: data.is_required ?? false,
+    max_select: Math.max(1, Math.round(data.max_select ?? 1)),
+    sort_order: data.sort_order ?? 0,
+  };
+  const { data: saved, error } = data.id
+    ? await ctx.supabase
+        .from("product_options")
+        .update(payload)
+        .eq("id", data.id)
+        .eq("store_id", store.id)
+        .select("*")
+        .single()
+    : await ctx.supabase.from("product_options").insert(payload).select("*").single();
+  if (error) throw new Error(error.message);
+
+  await ctx.supabase.from("product_option_values").delete().eq("option_id", saved.id);
+  const rows = data.values
+    .filter((v) => v.label.trim())
+    .map((v, index) => ({
+      option_id: saved.id,
+      label: v.label.trim(),
+      price_delta: Number(v.price_delta) || 0,
+      sort_order: v.sort_order ?? index,
+    }));
+  if (rows.length) {
+    const { error: vError } = await ctx.supabase.from("product_option_values").insert(rows);
+    if (vError) throw new Error(vError.message);
+  }
+  await logAction({
+    storeId: store.id,
+    actorId: ctx.userId,
+    actorLabel: member.display_name,
+    actorRole: "owner",
+    action: data.id ? "product_option.updated" : "product_option.created",
+    detail: { name: payload.name },
+  });
+  return saved;
+}
+
+export async function deleteProductOptionImpl(ctx: AuthedCtx, data: { id: string }) {
+  const { store } = await requireOwner(ctx);
+  await ctx.supabase.from("product_options").delete().eq("id", data.id).eq("store_id", store.id);
+  return { ok: true };
+}
+
 export async function deleteProductImpl(ctx: AuthedCtx, data: { id: string }) {
-  const { store, member } = await requireCashier(ctx);
+  const { store, member } = await requireOwner(ctx);
   await ctx.supabase.from("products").delete().eq("id", data.id).eq("store_id", store.id);
   await logAction({
     storeId: store.id,
@@ -551,12 +738,12 @@ export async function deleteProductImpl(ctx: AuthedCtx, data: { id: string }) {
   return { ok: true };
 }
 
-/** Stores a product photo in the private bucket and returns its storage path. */
+/** Stores a product photo in the public bucket and returns its storage path. */
 export async function uploadProductPhotoImpl(
   ctx: AuthedCtx,
   data: { base64: string; ext?: string },
 ) {
-  const { store } = await requireCashier(ctx);
+  const { store } = await requireOwner(ctx);
   const raw = data.base64.includes(",") ? data.base64.split(",")[1]! : data.base64;
   const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
   if (bytes.byteLength > 5 * 1024 * 1024) throw new Error("Image must be under 5 MB.");
@@ -600,7 +787,7 @@ export async function upsertVoucherImpl(
     is_active?: boolean;
   },
 ) {
-  const { store, member } = await requireCashier(ctx);
+  const { store, member } = await requireOwner(ctx);
   const payload = { ...data, code: data.code.trim().toUpperCase(), store_id: store.id };
   const { data: saved, error } = data.id
     ? await ctx.supabase
@@ -623,7 +810,7 @@ export async function upsertVoucherImpl(
 }
 
 export async function deleteVoucherImpl(ctx: AuthedCtx, data: { id: string }) {
-  const { store } = await requireCashier(ctx);
+  const { store } = await requireOwner(ctx);
   await ctx.supabase.from("vouchers").delete().eq("id", data.id).eq("store_id", store.id);
   return { ok: true };
 }
@@ -639,7 +826,7 @@ export async function upsertGiftImpl(
     is_active?: boolean;
   },
 ) {
-  const { store, member } = await requireCashier(ctx);
+  const { store, member } = await requireOwner(ctx);
   const payload = { ...data, store_id: store.id };
   const { data: saved, error } = data.id
     ? await ctx.supabase
@@ -662,20 +849,32 @@ export async function upsertGiftImpl(
 }
 
 export async function deleteGiftImpl(ctx: AuthedCtx, data: { id: string }) {
-  const { store } = await requireCashier(ctx);
+  const { store } = await requireOwner(ctx);
   await ctx.supabase.from("gifts").delete().eq("id", data.id).eq("store_id", store.id);
   return { ok: true };
 }
 
-export async function listLogsImpl(ctx: AuthedCtx, data: { limit?: number }) {
-  const { store } = await requireMember(ctx);
-  const { data: logs } = await ctx.supabase
+/**
+ * Everyone can read the shop's history, but the default view is your own
+ * trail. Only the owner may widen it to the whole team.
+ */
+export async function listLogsImpl(
+  ctx: AuthedCtx,
+  data: { limit?: number; scope?: "mine" | "all"; role?: StoreRole | "all" },
+) {
+  const { store, roles } = await requireMember(ctx);
+  const isOwner = roles.includes("owner");
+  const scope = isOwner ? (data.scope ?? "all") : "mine";
+  let query = ctx.supabase
     .from("activity_logs")
     .select("*")
     .eq("store_id", store.id)
     .order("created_at", { ascending: false })
-    .limit(data.limit ?? 100);
-  return logs ?? [];
+    .limit(Math.min(500, data.limit ?? 100));
+  if (scope === "mine") query = query.eq("actor_id", ctx.userId);
+  if (isOwner && data.role && data.role !== "all") query = query.eq("actor_role", data.role);
+  const { data: logs } = await query;
+  return { logs: logs ?? [], scope, canSeeEveryone: isOwner };
 }
 
 

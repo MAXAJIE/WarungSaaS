@@ -3,8 +3,9 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Ban, Check, Minus, Plus, QrCode, RefreshCw, Soup, Store, Timer } from "lucide-react";
-import { Loading, StaffShell, useMe } from "@/components/staff-shell";
+import { Ban, Check, ChevronDown, Minus, Plus, QrCode, RefreshCw, Soup, Store, Timer, UtensilsCrossed } from "lucide-react";
+import { Loading, StaffShell, useMe, type StoreRole } from "@/components/staff-shell";
+import { EmptyState } from "@/components/empty-state";
 import { OrderProgress } from "@/components/order-progress";
 import { QrScannerBox } from "@/components/qr-scanner-box";
 import { useI18n, statusKey } from "@/lib/i18n";
@@ -34,6 +35,8 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 type OrderRow = {
   id: string;
   order_no: number | null;
+  /** Pickup number shouted at the counter. */
+  order_code?: string | null;
   customer_name: string;
   note: string;
   status: string;
@@ -56,14 +59,18 @@ function DashboardPage() {
   const me = useMe();
   if (me.isLoading) return <Loading />;
   if (!me.data?.member) return <Onboarding />;
-  const role = me.data.member.role;
+  const roles = (me.data.roles?.length ? me.data.roles : [me.data.member.role]) as StoreRole[];
+  const isOwner = roles.includes("owner");
+  const isCashier = roles.includes("cashier");
+  const title = isOwner ? "Owner" : isCashier ? "Counter" : roles.includes("kitchen") ? "Kitchen" : "Pickup";
   return (
-    <StaffShell
-      title={role === "cashier" ? "Counter" : role === "kitchen" ? "Kitchen" : "Pickup"}
-      role={role}
-      storeName={me.data.store?.name ?? null}
-    >
-      {role === "cashier" ? <CashierBoard /> : <CrewBoard role={role} />}
+    <StaffShell title={title} roles={roles} storeName={me.data.store?.name ?? null}>
+      {/* One board per hat: the counter board, then any crew board the same
+          person also covers. */}
+      {(isOwner || isCashier) && <CashierBoard roles={roles} />}
+      {roles.includes("kitchen") && <CrewBoard role="kitchen" />}
+      {roles.includes("pickup") && !roles.includes("kitchen") && <CrewBoard role="pickup" />}
+      {roles.includes("kitchen") && roles.includes("pickup") && <CrewBoard role="pickup" />}
     </StaffShell>
   );
 }
@@ -93,7 +100,13 @@ function Onboarding() {
   });
   const peekM = useMutation({
     mutationFn: () => peek({ data: { code } }),
-    onSuccess: (res) => setInvite({ code: res.code, role: res.role, storeName: res.storeName }),
+    onSuccess: (res) =>
+      setInvite({
+        code: res.code,
+        // Invites only ever hand out a single working role.
+        role: res.role as "cashier" | "kitchen" | "pickup",
+        storeName: res.storeName,
+      }),
     onError: (e: Error) => toast.error(e.message),
   });
   const joinM = useMutation({
@@ -320,9 +333,12 @@ function OrderCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="font-display text-xl font-bold">
-            {order.order_no ? `#${order.order_no}` : t("st_submitted")}
+            {order.order_code ?? (order.order_no ? `#${order.order_no}` : t("st_submitted"))}
           </p>
-          <p className="text-sm text-muted-foreground">{order.customer_name}</p>
+          <p className="text-sm text-muted-foreground">
+            {order.order_code && order.order_no ? `#${order.order_no} · ` : ""}
+            {order.customer_name}
+          </p>
         </div>
         <StatusPill status={order.status} />
       </div>
@@ -404,8 +420,13 @@ function ActionButton({
 
 /* ------------------------- cashier ------------------------- */
 
-function CashierBoard() {
+function CashierBoard({ roles }: { roles: StoreRole[] }) {
   const { t } = useI18n();
+  // The counter takes money. Cooking and handing over belong to the kitchen
+  // and pickup crews, so a plain cashier never sees those buttons.
+  const canCook = roles.includes("owner") || roles.includes("kitchen");
+  const canHandOver = roles.includes("owner") || roles.includes("pickup");
+  const [showAllDone, setShowAllDone] = useState(false);
   const qc = useQueryClient();
   const orders = useOrders();
   const [tab, setTab] = useState<"live" | "scan" | "new">("live");
@@ -469,7 +490,7 @@ function CashierBoard() {
           <Section title={`${t("orders_active")} (${active.length})`}>
             {active.map((o) => (
               <OrderCard key={o.id} order={o} currency={currency}>
-                {o.status === "approved" && (
+                {canCook && o.status === "approved" && (
                   <ActionButton
                     tone="muted"
                     onClick={() =>
@@ -479,7 +500,7 @@ function CashierBoard() {
                     <Soup className="size-4" /> {t("start_cooking")}
                   </ActionButton>
                 )}
-                {["approved", "preparing"].includes(o.status) && (
+                {canCook && ["approved", "preparing"].includes(o.status) && (
                   <ActionButton
                     tone="muted"
                     onClick={() =>
@@ -489,7 +510,7 @@ function CashierBoard() {
                     <Check className="size-4" /> {t("mark_done")}
                   </ActionButton>
                 )}
-                {["kitchen_done", "received"].includes(o.status) && (
+                {canHandOver && ["kitchen_done", "received"].includes(o.status) && (
                   <ActionButton
                     onClick={() =>
                       run.mutate(() => advance({ data: { orderId: o.id, action: "complete" } }))
@@ -509,10 +530,22 @@ function CashierBoard() {
           </Section>
 
           <Section title={`${t("orders_done")} (${done.length})`}>
-            {done.map((o) => (
+            {/* The board stays readable: only the last three closed tickets,
+                with the rest one click away. */}
+            {(showAllDone ? done : done.slice(0, 3)).map((o) => (
               <OrderCard key={o.id} order={o} currency={currency} />
             ))}
           </Section>
+          {done.length > 3 && (
+            <button
+              type="button"
+              onClick={() => setShowAllDone((v) => !v)}
+              className="soft-press mx-auto flex items-center gap-2 rounded-2xl border border-border bg-card px-4 py-2 text-sm font-semibold"
+            >
+              <ChevronDown className={`size-4 transition-transform ${showAllDone ? "rotate-180" : ""}`} />
+              {showAllDone ? t("view_less") : `${t("view_more_history")} (${done.length - 3})`}
+            </button>
+          )}
         </>
       )}
     </div>
@@ -730,9 +763,13 @@ function WalkInPanel() {
             </div>
           ))}
         {rows.length === 0 && (
-          <p className="p-6 text-center text-sm text-muted-foreground">
-            {t("nav_products")} — <Link to="/products" className="underline">{t("add")}</Link>
-          </p>
+          <EmptyState
+            title={t("empty_products_title")}
+            hint={t("empty_products_hint")}
+            actionLabel={t("empty_products_cta")}
+            to="/products"
+            icon={<UtensilsCrossed className="size-5" />}
+          />
         )}
       </div>
       <ActionButton onClick={() => createM.mutate()} disabled={total <= 0 || createM.isPending}>
@@ -827,7 +864,7 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
       {orders.isLoading ? (
         <Loading />
       ) : list.length === 0 ? (
-        <p className="cozy-card p-10 text-center text-sm text-muted-foreground">{t("no_orders")}</p>
+        <EmptyState title={t("empty_orders_title")} hint={t("empty_orders_hint")} />
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {list.map((o) => (

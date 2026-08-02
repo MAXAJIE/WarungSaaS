@@ -10,13 +10,47 @@ import {
   requireMember,
   requireRole,
   type AuthedCtx,
+  type StoreRole,
 } from "./warung.server";
 import { compartmentsForOrder, notifyStore } from "./notifications.server";
 
 const ACTIVE = ["submitted", "approved", "preparing", "kitchen_done", "received"] as const;
 
+/**
+ * Kitchen staff only see tickets that contain something their compartment is
+ * responsible for. A kitchen member with no compartment sees everything, so a
+ * half-configured store never hides work.
+ */
+async function scopeToCompartment<T extends { id: string }>(
+  orders: T[],
+  groupId: string | null,
+): Promise<T[]> {
+  if (!groupId || !orders.length) return orders;
+  const { data: rows } = await supabaseAdmin
+    .from("order_items")
+    .select("order_id, product_id")
+    .in(
+      "order_id",
+      orders.map((o) => o.id),
+    );
+  const productIds = Array.from(
+    new Set((rows ?? []).map((r) => r.product_id).filter((x): x is string => !!x)),
+  );
+  if (!productIds.length) return [];
+  const { data: links } = await supabaseAdmin
+    .from("product_compartments")
+    .select("product_id, group_id")
+    .in("product_id", productIds)
+    .eq("group_id", groupId);
+  const mine = new Set((links ?? []).map((l) => l.product_id));
+  const allowed = new Set(
+    (rows ?? []).filter((r) => r.product_id && mine.has(r.product_id)).map((r) => r.order_id),
+  );
+  return orders.filter((o) => allowed.has(o.id));
+}
+
 export async function listOrdersImpl(ctx: AuthedCtx) {
-  const { store, member } = await requireMember(ctx);
+  const { store, member, roles } = await requireMember(ctx);
   await purgeExpired(store.id);
 
   const base = supabaseAdmin
@@ -28,23 +62,27 @@ export async function listOrdersImpl(ctx: AuthedCtx) {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
-  if (member.role === "kitchen") {
-    const { data } = await base.in("status", ["approved", "preparing", "kitchen_done"]);
-    return { role: member.role, store, orders: data ?? [] };
-  }
-  if (member.role === "pickup") {
+  // The owner and the counter both need the full board; single-role staff get
+  // only the slice of the day they can act on.
+  if (!roles.includes("owner") && !roles.includes("cashier")) {
+    if (roles.includes("kitchen")) {
+      const { data } = await base.in("status", ["approved", "preparing", "kitchen_done"]);
+      const scoped = await scopeToCompartment(data ?? [], member.group_id);
+      return { role: member.role, roles, store, orders: scoped };
+    }
     const { data } = await base.in("status", [
       "approved",
       "preparing",
       "kitchen_done",
       "received",
     ]);
-    return { role: member.role, store, orders: data ?? [] };
+    return { role: member.role, roles, store, orders: data ?? [] };
   }
+
   const { data } = await base
     .in("status", [...ACTIVE, "completed", "cancelled"])
     .gte("created_at", startOfDay.toISOString());
-  return { role: member.role, store, orders: data ?? [] };
+  return { role: member.role, roles, store, orders: data ?? [] };
 }
 
 export async function createWalkInImpl(
@@ -101,6 +139,7 @@ export async function createWalkInImpl(
     actorId: ctx.userId,
     actorLabel: member.display_name,
     orderId: order.id,
+    actorRole: "cashier",
     action: "order.counter_created",
     detail: { customer: data.customer_name },
   });
@@ -208,6 +247,10 @@ export async function approveOrderImpl(ctx: AuthedCtx, data: { orderId: string }
   if (order.status !== "submitted") throw new Error("Only unpaid submitted orders can be approved.");
 
   const { data: numbered } = await supabaseAdmin.rpc("assign_order_no", { p_order: order.id });
+  // The pickup number the customer will be called by. Minted once, at payment.
+  const { data: orderCode } = await supabaseAdmin.rpc("assign_order_code" as never, {
+    p_order: order.id,
+  } as never);
 
   if (order.voucher_id) {
     await supabaseAdmin
@@ -265,8 +308,9 @@ export async function approveOrderImpl(ctx: AuthedCtx, data: { orderId: string }
     actorId: ctx.userId,
     actorLabel: member.display_name,
     orderId: order.id,
+    actorRole: "cashier",
     action: "order.approved",
-    detail: { order_no: numbered, total: Number(order.total) },
+    detail: { order_no: numbered, order_code: orderCode ?? null, total: Number(order.total) },
   });
 
   // Only the compartments responsible for the items in this order are alerted.
@@ -275,7 +319,10 @@ export async function approveOrderImpl(ctx: AuthedCtx, data: { orderId: string }
     storeId: store.id,
     roles: ["kitchen", "pickup"],
     type: "order.approved",
-    payload: { order_no: (numbered as number | null) ?? order.order_no ?? 0 },
+    payload: {
+      order_no: (numbered as number | null) ?? order.order_no ?? 0,
+      order_code: (orderCode as string | null) ?? "",
+    },
     groupIds: groups,
     targetUrl: "/dashboard",
     exceptUserId: ctx.userId,
@@ -283,14 +330,32 @@ export async function approveOrderImpl(ctx: AuthedCtx, data: { orderId: string }
   return loadFullOrder(order.id);
 }
 
+/*
+ * Who may push a ticket forward.
+ *
+ * The counter is deliberately absent from every row: a cashier approves
+ * payment and nothing else. Cooking belongs to the kitchen, handing over
+ * belongs to pickup, and only the customer can say they received their food.
+ * The owner is included everywhere because the owner covers every station.
+ */
 const TRANSITIONS: Record<
   string,
-  { from: string[]; to: string; roles: Array<"cashier" | "kitchen" | "pickup">; stamp?: string }
+  { from: string[]; to: string; roles: StoreRole[]; stamp?: string }
 > = {
-  start: { from: ["approved"], to: "preparing", roles: ["kitchen", "cashier"] },
-  kitchen_done: { from: ["preparing", "approved"], to: "kitchen_done", roles: ["kitchen", "cashier"], stamp: "ready_at" },
-  receive: { from: ["kitchen_done"], to: "received", roles: ["pickup", "cashier"] },
-  complete: { from: ["received", "kitchen_done"], to: "completed", roles: ["pickup", "cashier"], stamp: "completed_at" },
+  start: { from: ["approved"], to: "preparing", roles: ["kitchen", "owner"] },
+  kitchen_done: {
+    from: ["preparing", "approved"],
+    to: "kitchen_done",
+    roles: ["pickup", "kitchen", "owner"],
+    stamp: "ready_at",
+  },
+  receive: { from: ["kitchen_done"], to: "received", roles: ["pickup", "owner"] },
+  complete: {
+    from: ["received", "kitchen_done"],
+    to: "completed",
+    roles: ["pickup", "owner"],
+    stamp: "completed_at",
+  },
 };
 
 export async function advanceOrderImpl(
@@ -299,7 +364,7 @@ export async function advanceOrderImpl(
 ) {
   const rule = TRANSITIONS[data.action];
   if (!rule) throw new Error("Unknown action.");
-  const { store, member } = await requireRole(ctx, rule.roles);
+  const { store, member, roles } = await requireRole(ctx, rule.roles);
   const { data: order } = await supabaseAdmin
     .from("orders")
     .select("*")
@@ -308,6 +373,12 @@ export async function advanceOrderImpl(
     .maybeSingle();
   if (!order) throw new Error("Order not found.");
   if (!rule.from.includes(order.status)) throw new Error("This order is not at that step anymore.");
+
+  // A cook can only touch a ticket their own compartment is on.
+  if (!roles.includes("owner") && roles.includes("kitchen") && member.group_id) {
+    const visible = await scopeToCompartment([{ id: order.id }], member.group_id);
+    if (!visible.length) throw new Error("This order is not for your compartment.");
+  }
 
   const stamp = rule.stamp ? { [rule.stamp]: new Date().toISOString() } : {};
   await supabaseAdmin
@@ -319,8 +390,9 @@ export async function advanceOrderImpl(
     actorId: ctx.userId,
     actorLabel: member.display_name,
     orderId: order.id,
+    actorRole: (rule.roles.find((r) => roles.includes(r)) ?? member.role) as StoreRole,
     action: `order.${data.action}`,
-    detail: { order_no: order.order_no },
+    detail: { order_no: order.order_no, order_code: order.order_code ?? null },
   });
 
   if (rule.to === "kitchen_done") {
@@ -346,7 +418,7 @@ export async function advanceOrderImpl(
 }
 
 export async function cancelOrderImpl(ctx: AuthedCtx, data: { orderId: string; reason?: string }) {
-  const { store, member } = await requireCashier(ctx);
+  const { store, member, roles } = await requireCashier(ctx);
   const { data: order } = await supabaseAdmin
     .from("orders")
     .select("*")
@@ -367,8 +439,9 @@ export async function cancelOrderImpl(ctx: AuthedCtx, data: { orderId: string; r
     actorId: ctx.userId,
     actorLabel: member.display_name,
     orderId: order.id,
+    actorRole: roles.includes("owner") ? "owner" : "cashier",
     action: "order.cancelled",
-    detail: { reason: data.reason ?? "" },
+    detail: { reason: data.reason ?? "", order_code: order.order_code ?? null },
   });
 
   await notifyStore({

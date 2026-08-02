@@ -7,15 +7,30 @@ export type AuthedCtx = {
   userId: string;
 };
 
+/** Every hat a person can wear. Only the owner may hold more than one. */
+export type StoreRole = "owner" | "cashier" | "kitchen" | "pickup";
+
+/** Roles the owner can hand out on the People page. */
+export const ASSIGNABLE_ROLES: StoreRole[] = ["owner", "cashier", "kitchen", "pickup"];
+
+const ROLE_RANK: Record<StoreRole, number> = { owner: 0, cashier: 1, kitchen: 2, pickup: 3 };
+
+/** Most-privileged first, so `roles[0]` is always the primary hat. */
+export function sortRoles(roles: StoreRole[]): StoreRole[] {
+  return Array.from(new Set(roles)).sort((a, b) => ROLE_RANK[a] - ROLE_RANK[b]);
+}
+
 export type Membership = {
   member: {
     id: string;
     store_id: string;
     user_id: string;
-    role: "cashier" | "kitchen" | "pickup";
+    role: StoreRole;
     display_name: string;
     group_id: string | null;
   };
+  /** Full role set, primary first. Never empty. */
+  roles: StoreRole[];
   store: Database["public"]["Tables"]["stores"]["Row"];
 };
 
@@ -34,7 +49,20 @@ export async function getMembership(ctx: AuthedCtx): Promise<Membership | null> 
     .eq("id", member.store_id)
     .maybeSingle();
   if (!store) return null;
-  return { member, store } as Membership;
+
+  const { data: extra } = await ctx.supabase
+    .from("member_roles")
+    .select("role")
+    .eq("member_id", member.id);
+
+  // The primary role on store_members is always part of the set, so a member
+  // whose member_roles rows are missing still behaves exactly as before.
+  const roles = sortRoles([
+    ...((extra ?? []).map((r) => r.role) as StoreRole[]),
+    member.role as StoreRole,
+  ]);
+
+  return { member, roles, store } as Membership;
 }
 
 export async function requireMember(ctx: AuthedCtx): Promise<Membership> {
@@ -43,18 +71,24 @@ export async function requireMember(ctx: AuthedCtx): Promise<Membership> {
   return m;
 }
 
+/** Counter duty: taking payment. The owner always counts as a cashier too. */
 export async function requireCashier(ctx: AuthedCtx): Promise<Membership> {
   const m = await requireMember(ctx);
-  if (m.member.role !== "cashier") throw new Error("Only the owner/cashier can do this.");
+  if (!m.roles.includes("cashier") && !m.roles.includes("owner"))
+    throw new Error("Only the counter can do this.");
   return m;
 }
 
-export async function requireRole(
-  ctx: AuthedCtx,
-  roles: Array<"cashier" | "kitchen" | "pickup">,
-): Promise<Membership> {
+/** Anything that changes the shape of the business: products, people, promos. */
+export async function requireOwner(ctx: AuthedCtx): Promise<Membership> {
   const m = await requireMember(ctx);
-  if (!roles.includes(m.member.role)) throw new Error("Your role cannot do this.");
+  if (!m.roles.includes("owner")) throw new Error("Only the owner can do this.");
+  return m;
+}
+
+export async function requireRole(ctx: AuthedCtx, roles: StoreRole[]): Promise<Membership> {
+  const m = await requireMember(ctx);
+  if (!roles.some((r) => m.roles.includes(r))) throw new Error("Your role cannot do this.");
   return m;
 }
 
@@ -62,6 +96,8 @@ export async function logAction(args: {
   storeId: string;
   actorId?: string | null;
   actorLabel: string;
+  /** Which hat the person was wearing. Drives the per-role log views. */
+  actorRole?: StoreRole | null;
   orderId?: string | null;
   action: string;
   detail?: Record<string, unknown>;
@@ -70,10 +106,11 @@ export async function logAction(args: {
     store_id: args.storeId,
     actor_id: args.actorId ?? null,
     actor_label: args.actorLabel,
+    actor_role: args.actorRole ?? null,
     order_id: args.orderId ?? null,
     action: args.action,
     detail: (args.detail ?? {}) as never,
-  });
+  } as never);
 }
 
 export function randomCode(len = 6) {
@@ -91,10 +128,20 @@ export function randomToken() {
     .join("");
 }
 
-export async function signPhoto(path: string | null | undefined): Promise<string | null> {
+/**
+ * Product photos live in a PUBLIC bucket, so the URL is stable and cacheable
+ * instead of a signed link that expires mid-service. Values that are already
+ * absolute URLs are passed straight through.
+ */
+export function productPhotoUrl(path: string | null | undefined): string | null {
   if (!path) return null;
-  const { data } = await supabaseAdmin.storage.from("product-photos").createSignedUrl(path, 3600);
-  return data?.signedUrl ?? null;
+  if (/^https?:\/\//i.test(path)) return path;
+  const { data } = supabaseAdmin.storage.from("product-photos").getPublicUrl(path);
+  return data?.publicUrl ?? null;
+}
+
+export async function signPhoto(path: string | null | undefined): Promise<string | null> {
+  return productPhotoUrl(path);
 }
 
 export async function signPhotos<T extends { photo_url: string | null }>(

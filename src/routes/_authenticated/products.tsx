@@ -3,7 +3,17 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Check, GripVertical, ImagePlus, Layers, Pencil, Plus, Trash2, X } from "lucide-react";
+import {
+  Check,
+  Eye,
+  GripVertical,
+  ImagePlus,
+  Layers,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { Loading, StaffShell, useStoreGuard } from "@/components/staff-shell";
 import { ConfirmDialog, Modal } from "@/components/modal";
 import { useI18n } from "@/lib/i18n";
@@ -17,6 +27,9 @@ import {
   upsertProduct,
 } from "@/lib/staff.functions";
 import { ViewToolbar, useViewPrefs, viewGridClass, viewPadClass } from "@/components/view-toolbar";
+import { ImageCropper } from "@/components/image-cropper";
+import { EmptyState } from "@/components/empty-state";
+import { ProductOptionsEditor } from "@/components/product-options-editor";
 
 export const Route = createFileRoute("/_authenticated/products")({
   component: ProductsPage,
@@ -65,6 +78,9 @@ const blank = {
 
 type Draft = typeof blank & { id?: string };
 
+/** The create/edit dialog is split per topic instead of one endless form. */
+type TabId = "basics" | "pricing" | "inventory" | "options" | "combo" | "photo";
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
@@ -100,6 +116,8 @@ function ProductsPage() {
   const remove = useServerFn(deleteProduct);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
+  const [tab, setTab] = useState<TabId>("basics");
+  const [cropFile, setCropFile] = useState<File | null>(null);
   const [order, setOrder] = useState<string[]>([]);
   const dragId = useRef<string | null>(null);
 
@@ -146,16 +164,9 @@ function ProductsPage() {
   });
 
   const uploadM = useMutation({
-    mutationFn: async (file: File) => {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error("Could not read that image."));
-        reader.readAsDataURL(file);
-      });
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-      return upload({ data: { base64, ext } });
-    },
+    // The cropper hands us a square JPEG data URL, so the stored file always
+    // matches the square tiles used on the menu.
+    mutationFn: async (dataUrl: string) => upload({ data: { base64: dataUrl, ext: "jpg" } }),
     onSuccess: (res) =>
       setDraft((d) => (d ? { ...d, photo_url: res.path, photo_preview: res.signedUrl } : d)),
     onError: (e: Error) => toast.error(e.message),
@@ -209,22 +220,38 @@ function ProductsPage() {
   return (
     <StaffShell
       title={t("nav_products")}
-      role={me.data?.member?.role ?? null}
+      roles={(me.data?.roles?.length ? me.data.roles : me.data?.member ? [me.data.member.role] : []) as never}
       storeName={me.data?.store?.name ?? null}
     >
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <button
-          onClick={() => setDraft({ ...blank })}
+          onClick={() => {
+            setTab("basics");
+            setDraft({ ...blank });
+          }}
           className="soft-press inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground shadow-lift"
         >
           <Plus className="size-4" /> {t("new_product")}
         </button>
         <button
-          onClick={() => setDraft({ ...blank, is_combo: true })}
+          onClick={() => {
+            setTab("basics");
+            setDraft({ ...blank, is_combo: true });
+          }}
           className="soft-press inline-flex items-center gap-2 rounded-full border border-border bg-card px-5 py-2.5 text-sm font-bold"
         >
           <Layers className="size-4" /> {t("new_combo")}
         </button>
+        {me.data?.store?.slug && (
+          <a
+            href={`/s/${me.data.store.slug}`}
+            target="_blank"
+            rel="noreferrer"
+            className="soft-press inline-flex items-center gap-2 rounded-full border border-border bg-card px-5 py-2.5 text-sm font-bold"
+          >
+            <Eye className="size-4" /> {t("preview_as_customer")}
+          </a>
+        )}
         {canDrag && rows.length > 1 && (
           <span className="text-xs text-muted-foreground">{t("drag_hint")}</span>
         )}
@@ -256,10 +283,31 @@ function ProductsPage() {
       >
         {draft && (
           <div className="space-y-5">
-            <section className="space-y-3">
-              <p className="text-xs font-bold uppercase tracking-widest text-primary">
-                {t("basics")}
-              </p>
+            <div className="flex flex-wrap gap-1.5 rounded-2xl bg-muted/50 p-1.5">
+              {(
+                [
+                  ["basics", t("basics")],
+                  ["pricing", t("pricing")],
+                  ["inventory", t("inventory")],
+                  ["options", t("customisations")],
+                  ["combo", t("combo")],
+                  ["photo", t("details")],
+                ] as Array<[TabId, string]>
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setTab(id)}
+                  className={`soft-press rounded-xl px-3 py-1.5 text-xs font-bold transition-colors ${
+                    tab === id ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <section className={`space-y-3 ${tab === "basics" ? "" : "hidden"}`}>
               <div className="grid gap-3 sm:grid-cols-3">
                 {(
                   [
@@ -337,10 +385,7 @@ function ProductsPage() {
               </Field>
             </section>
 
-            <section className="space-y-3">
-              <p className="text-xs font-bold uppercase tracking-widest text-primary">
-                {t("pricing")}
-              </p>
+            <section className={`space-y-3 ${tab === "pricing" ? "" : "hidden"}`}>
               <div className="grid grid-cols-2 gap-3">
                 {(
                   [
@@ -362,10 +407,7 @@ function ProductsPage() {
               </div>
             </section>
 
-            <section className="space-y-3">
-              <p className="text-xs font-bold uppercase tracking-widest text-primary">
-                {t("inventory")}
-              </p>
+            <section className={`space-y-3 ${tab === "inventory" ? "" : "hidden"}`}>
               <div className="grid gap-3 sm:grid-cols-3">
                 <Field label={t("stock_total")}>
                   <input
@@ -410,10 +452,7 @@ function ProductsPage() {
               <p className="text-[11px] text-muted-foreground">{t("stock_hint")}</p>
             </section>
 
-            <section className="space-y-3">
-              <p className="text-xs font-bold uppercase tracking-widest text-primary">
-                {t("combo")}
-              </p>
+            <section className={`space-y-3 ${tab === "combo" ? "" : "hidden"}`}>
               <label className="flex items-center gap-2 text-sm font-semibold">
                 <input
                   type="checkbox"
@@ -480,10 +519,15 @@ function ProductsPage() {
               )}
             </section>
 
-            <section className="space-y-3">
-              <p className="text-xs font-bold uppercase tracking-widest text-primary">
-                {t("details")}
-              </p>
+            <section className={`space-y-3 ${tab === "options" ? "" : "hidden"}`}>
+              {draft.id ? (
+                <ProductOptionsEditor productId={draft.id} />
+              ) : (
+                <p className="text-sm text-muted-foreground">{t("save_first")}</p>
+              )}
+            </section>
+
+            <section className={`space-y-3 ${tab === "photo" ? "" : "hidden"}`}>
               <div className="flex items-center gap-3">
                 <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-2xl border border-border bg-muted">
                   {draft.photo_preview ? (
@@ -505,7 +549,7 @@ function ProductsPage() {
                     className="hidden"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
-                      if (file) uploadM.mutate(file);
+                      if (file) setCropFile(file);
                       e.target.value = "";
                     }}
                   />
@@ -545,10 +589,31 @@ function ProductsPage() {
         destructive
       />
 
+      {cropFile && (
+        <ImageCropper
+          file={cropFile}
+          onCancel={() => setCropFile(null)}
+          onCropped={(dataUrl) => {
+            setCropFile(null);
+            uploadM.mutate(dataUrl);
+          }}
+        />
+      )}
+
       <ViewToolbar prefs={prefs} set={set} filters={filters} />
 
       {list.isLoading ? (
         <Loading />
+      ) : rows.length === 0 ? (
+        <EmptyState
+          title={t("empty_products_title")}
+          hint={t("empty_products_hint")}
+          actionLabel={t("new_product")}
+          onAction={() => {
+            setTab("basics");
+            setDraft({ ...blank });
+          }}
+        />
       ) : (
         <div className={viewGridClass(prefs)}>
           {rows.map((p) => (
@@ -614,7 +679,8 @@ function ProductsPage() {
               </div>
               <div className="flex flex-col gap-2">
                 <button
-                  onClick={() =>
+                  onClick={() => {
+                    setTab("basics");
                     setDraft({
                       id: p.id,
                       name: p.name,
@@ -634,8 +700,8 @@ function ProductsPage() {
                       })),
                       photo_url: p.photo_url,
                       photo_preview: p.photo_signed_url,
-                    })
-                  }
+                    });
+                  }}
                   className="soft-press grid size-9 place-items-center rounded-2xl border border-border"
                   aria-label={t("edit")}
                 >

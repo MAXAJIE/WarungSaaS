@@ -45,6 +45,10 @@ export function useStoreGuard() {
 
 
 type NavItem = { to: string; label: string; icon: typeof Soup };
+/** A sidebar block that belongs to one hat the person wears. */
+type NavGroup = { role: StoreRole; label: string; items: NavItem[] };
+
+export type StoreRole = "owner" | "cashier" | "kitchen" | "pickup";
 
 const RAIL = "72px";
 const IDLE_MINUTES = 20;
@@ -105,11 +109,14 @@ export function StaffShell({
   children,
   title,
   role,
+  roles,
   storeName,
 }: {
   children: ReactNode;
   title: string;
-  role?: "cashier" | "kitchen" | "pickup" | null;
+  role?: StoreRole | null;
+  /** Full role set. Preferred over `role`, which stays for single-hat pages. */
+  roles?: StoreRole[];
   storeName?: string | null;
 }) {
   const { t } = useI18n();
@@ -118,27 +125,43 @@ export function StaffShell({
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [confirmOut, setConfirmOut] = useState(false);
 
-  const items: NavItem[] =
-    role === "cashier"
-      ? [
-          { to: "/dashboard", label: t("nav_orders"), icon: ClipboardList },
-          { to: "/products", label: t("nav_products"), icon: UtensilsCrossed },
-          { to: "/promos", label: t("nav_promos"), icon: Gift },
-          { to: "/people", label: t("nav_people"), icon: Users },
-          { to: "/store", label: t("nav_store"), icon: Store },
-          { to: "/analytics", label: t("nav_analytics"), icon: BarChart3 },
-          { to: "/logs", label: t("nav_logs"), icon: ScrollText },
-          { to: "/profile", label: t("nav_profile"), icon: UserRound },
-        ]
-      : [
-          {
-            to: "/dashboard",
-            label: role === "kitchen" ? t("nav_kitchen") : t("nav_pickup"),
-            icon: Soup,
-          },
-          { to: "/logs", label: t("nav_logs"), icon: ScrollText },
-          { to: "/profile", label: t("nav_profile"), icon: UserRound },
-        ];
+  // Somebody with several hats gets one block per hat: the owner tools first,
+  // then whatever extra duty they also cover. Nothing is ever duplicated.
+  const allRoles: StoreRole[] = roles?.length ? roles : role ? [role] : [];
+  const groups: NavGroup[] = [];
+  const seen = new Set<string>();
+  const push = (r: StoreRole, label: string, items: NavItem[]) => {
+    const fresh = items.filter((i) => !seen.has(i.to));
+    fresh.forEach((i) => seen.add(i.to));
+    if (fresh.length) groups.push({ role: r, label, items: fresh });
+  };
+
+  if (allRoles.includes("owner"))
+    push("owner", t("role_owner"), [
+      { to: "/dashboard", label: t("nav_orders"), icon: ClipboardList },
+      { to: "/products", label: t("nav_products"), icon: UtensilsCrossed },
+      { to: "/promos", label: t("nav_promos"), icon: Gift },
+      { to: "/people", label: t("nav_people"), icon: Users },
+      { to: "/store", label: t("nav_store"), icon: Store },
+      { to: "/analytics", label: t("nav_analytics"), icon: BarChart3 },
+    ]);
+  if (allRoles.includes("cashier"))
+    push("cashier", t("role_cashier"), [
+      { to: "/dashboard", label: t("nav_orders"), icon: ClipboardList },
+    ]);
+  if (allRoles.includes("kitchen"))
+    push("kitchen", t("role_kitchen"), [
+      { to: "/dashboard", label: t("nav_kitchen"), icon: Soup },
+    ]);
+  if (allRoles.includes("pickup"))
+    push("pickup", t("role_pickup"), [{ to: "/dashboard", label: t("nav_pickup"), icon: Soup }]);
+
+  push(allRoles[0] ?? "cashier", t("nav_profile"), [
+    { to: "/logs", label: t("nav_logs"), icon: ScrollText },
+    { to: "/profile", label: t("nav_profile"), icon: UserRound },
+  ]);
+
+  const items: NavItem[] = groups.flatMap((g) => g.items);
 
   async function signOut() {
     await queryClient.cancelQueries();
@@ -168,10 +191,20 @@ export function StaffShell({
         </div>
 
         <nav className="mt-3 flex flex-1 flex-col items-center gap-1.5 px-2">
-          {items.map((i) => (
-            <RailButton key={i.to} to={i.to} label={i.label} active={pathname === i.to}>
-              <i.icon className="size-[18px]" />
-            </RailButton>
+          {groups.map((g, gi) => (
+            <div key={`${g.role}-${gi}`} className="flex w-full flex-col items-center gap-1.5">
+              {gi > 0 && <span className="my-1 h-px w-8 rounded-full bg-sidebar-border" />}
+              {groups.length > 1 && (
+                <span className="w-full truncate text-center text-[9px] font-bold uppercase tracking-wide text-sidebar-foreground/45">
+                  {g.label}
+                </span>
+              )}
+              {g.items.map((i) => (
+                <RailButton key={i.to} to={i.to} label={i.label} active={pathname === i.to}>
+                  <i.icon className="size-[18px]" />
+                </RailButton>
+              ))}
+            </div>
           ))}
         </nav>
 
@@ -189,10 +222,10 @@ export function StaffShell({
               <p className="truncate font-display text-lg font-semibold leading-tight">{title}</p>
               <p className="truncate text-xs text-muted-foreground">
                 {storeName ?? t("app_name")}
-                {role ? ` · ${t(`role_${role}`)}` : ""}
+                {allRoles.length ? ` · ${allRoles.map((r) => t(`role_${r}`)).join(" + ")}` : ""}
               </p>
             </div>
-            <NotificationBell enabled={!!role} />
+            <NotificationBell enabled={allRoles.length > 0} />
             <LanguageSwitcher compact />
             <button
               type="button"

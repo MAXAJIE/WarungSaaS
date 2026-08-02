@@ -19,6 +19,11 @@ import {
   reorderProductsImpl,
   revokeInviteImpl,
   setMemberGroupImpl,
+  setMemberRolesImpl,
+  listProductOptionsImpl,
+  upsertProductOptionImpl,
+  deleteProductOptionImpl,
+  type ProductOptionInput,
   requestRoleChangeImpl,
   decideRoleRequestImpl,
   updateProfileImpl,
@@ -57,6 +62,7 @@ export const updateStore = createServerFn({ method: "POST" })
       avg_prep_minutes?: number;
       disclaimer?: string;
       is_open?: boolean;
+      order_code_template?: string;
     }) => d,
   )
   .handler(async ({ context, data }) => updateStoreImpl(context, data));
@@ -154,7 +160,7 @@ export const deleteGift = createServerFn({ method: "POST" })
 
 export const listLogs = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: { limit?: number }) => d)
+  .inputValidator((d: { limit?: number; scope?: "mine" | "all"; role?: StaffRole | "all" }) => d)
   .handler(async ({ context, data }) => listLogsImpl(context, data));
 
 export const reorderProducts = createServerFn({ method: "POST" })
@@ -191,3 +197,23 @@ export const decideRoleRequest = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: { id: string; approve: boolean }) => d)
   .handler(async ({ context, data }) => decideRoleRequestImpl(context, data));
+
+export const setMemberRoles = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { memberId: string; roles: StaffRole[] }) => d)
+  .handler(async ({ context, data }) => setMemberRolesImpl(context, data));
+
+export const listProductOptions = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { product_id: string }) => d)
+  .handler(async ({ context, data }) => listProductOptionsImpl(context, data));
+
+export const upsertProductOption = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: ProductOptionInput) => d)
+  .handler(async ({ context, data }) => upsertProductOptionImpl(context, data));
+
+export const deleteProductOption = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { id: string }) => d)
+  .handler(async ({ context, data }) => deleteProductOptionImpl(context, data));

@@ -19,6 +19,7 @@ export type Database = {
           action: string
           actor_id: string | null
           actor_label: string
+          actor_role: Database["public"]["Enums"]["staff_role"] | null
           created_at: string
           detail: Json
           id: string
@@ -29,6 +30,7 @@ export type Database = {
           action: string
           actor_id?: string | null
           actor_label?: string
+          actor_role?: Database["public"]["Enums"]["staff_role"] | null
           created_at?: string
           detail?: Json
           id?: string
@@ -39,6 +41,7 @@ export type Database = {
           action?: string
           actor_id?: string | null
           actor_label?: string
+          actor_role?: Database["public"]["Enums"]["staff_role"] | null
           created_at?: string
           detail?: Json
           id?: string
@@ -54,6 +57,93 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      member_roles: {
+        Row: {
+          created_at: string
+          id: string
+          member_id: string
+          role: Database["public"]["Enums"]["staff_role"]
+          store_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          member_id: string
+          role: Database["public"]["Enums"]["staff_role"]
+          store_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          member_id?: string
+          role?: Database["public"]["Enums"]["staff_role"]
+          store_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      product_options: {
+        Row: {
+          created_at: string
+          id: string
+          is_required: boolean
+          max_select: number
+          name: string
+          product_id: string
+          sort_order: number
+          store_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_required?: boolean
+          max_select?: number
+          name: string
+          product_id: string
+          sort_order?: number
+          store_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_required?: boolean
+          max_select?: number
+          name?: string
+          product_id?: string
+          sort_order?: number
+          store_id?: string
+        }
+        Relationships: []
+      }
+      product_option_values: {
+        Row: {
+          created_at: string
+          id: string
+          label: string
+          option_id: string
+          price_delta: number
+          sort_order: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          label: string
+          option_id: string
+          price_delta?: number
+          sort_order?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          label?: string
+          option_id?: string
+          price_delta?: number
+          sort_order?: number
+        }
+        Relationships: []
       }
       combo_items: {
         Row: {
@@ -216,6 +306,7 @@ export type Database = {
           created_at: string
           id: string
           name_snapshot: string
+          options: Json
           order_id: string
           product_id: string | null
           qty: number
@@ -226,6 +317,7 @@ export type Database = {
           created_at?: string
           id?: string
           name_snapshot: string
+          options?: Json
           order_id: string
           product_id?: string | null
           qty?: number
@@ -236,6 +328,7 @@ export type Database = {
           created_at?: string
           id?: string
           name_snapshot?: string
+          options?: Json
           order_id?: string
           product_id?: string | null
           qty?: number
@@ -271,10 +364,12 @@ export type Database = {
           guest_token: string
           id: string
           note: string
+          order_code: string | null
           order_no: number | null
           qr_expires_at: string | null
           qr_token: string | null
           ready_at: string | null
+          received_at: string | null
           source: string
           status: Database["public"]["Enums"]["order_status"]
           store_id: string
@@ -295,10 +390,12 @@ export type Database = {
           guest_token?: string
           id?: string
           note?: string
+          order_code?: string | null
           order_no?: number | null
           qr_expires_at?: string | null
           qr_token?: string | null
           ready_at?: string | null
+          received_at?: string | null
           source?: string
           status?: Database["public"]["Enums"]["order_status"]
           store_id: string
@@ -319,10 +416,12 @@ export type Database = {
           guest_token?: string
           id?: string
           note?: string
+          order_code?: string | null
           order_no?: number | null
           qr_expires_at?: string | null
           qr_token?: string | null
           ready_at?: string | null
+          received_at?: string | null
           source?: string
           status?: Database["public"]["Enums"]["order_status"]
           store_id?: string
@@ -647,6 +746,8 @@ export type Database = {
           id: string
           is_open: boolean
           name: string
+          order_code_template: string
+          order_seq: number
           owner_id: string
           slug: string
           tagline: string
@@ -660,6 +761,8 @@ export type Database = {
           id?: string
           is_open?: boolean
           name: string
+          order_code_template?: string
+          order_seq?: number
           owner_id: string
           slug: string
           tagline?: string
@@ -673,6 +776,8 @@ export type Database = {
           id?: string
           is_open?: boolean
           name?: string
+          order_code_template?: string
+          order_seq?: number
           owner_id?: string
           slug?: string
           tagline?: string
@@ -754,7 +859,7 @@ export type Database = {
         | "received"
         | "completed"
         | "cancelled"
-      staff_role: "cashier" | "kitchen" | "pickup"
+      staff_role: "cashier" | "kitchen" | "pickup" | "owner"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -893,7 +998,7 @@ export const Constants = {
         "completed",
         "cancelled",
       ],
-      staff_role: ["cashier", "kitchen", "pickup"],
+      staff_role: ["cashier", "kitchen", "pickup", "owner"],
     },
   },
 } as const
