@@ -5,6 +5,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { ChefHat, Copy, HandPlatter, Plus, Store, Trash2, UserMinus, UserPlus } from "lucide-react";
 import { Loading, StaffShell, useStoreGuard } from "@/components/staff-shell";
+import { EmptyState } from "@/components/empty-state";
 import { useI18n } from "@/lib/i18n";
 import {
   createInvite,
@@ -26,7 +27,11 @@ function PeoplePage() {
   const { t } = useI18n();
   const { me, hasStore } = useStoreGuard();
   const qc = useQueryClient();
-  const people = useQuery({ queryKey: ["people"], queryFn: useServerFn(listPeople) as never, enabled: hasStore });
+  const people = useQuery({
+    queryKey: ["people"],
+    queryFn: useServerFn(listPeople) as never,
+    enabled: hasStore,
+  });
   const invite = useServerFn(createInvite);
   const revoke = useServerFn(revokeInvite);
   const kick = useServerFn(kickMember);
@@ -71,7 +76,13 @@ function PeoplePage() {
   return (
     <StaffShell
       title={t("nav_people")}
-      roles={(me.data?.roles?.length ? me.data.roles : me.data?.member ? [me.data.member.role] : []) as never}
+      roles={
+        (me.data?.roles?.length
+          ? me.data.roles
+          : me.data?.member
+            ? [me.data.member.role]
+            : []) as never
+      }
       storeName={me.data?.store?.name ?? null}
     >
       {people.isLoading ? (
@@ -80,6 +91,9 @@ function PeoplePage() {
         <div className="grid gap-5 lg:grid-cols-2">
           <section className="space-y-5">
             <h2 className="font-display text-xl font-bold">{t("members")}</h2>
+            {(data?.members ?? []).length === 0 && (
+              <EmptyState title={t("empty_members_title")} hint={t("empty_members_hint")} />
+            )}
             {(["cashier", "kitchen", "pickup"] as const).map((role) => {
               const list = (data?.members ?? []).filter((m) => m.role === role);
               if (!list.length) return null;
@@ -180,12 +194,11 @@ function PeoplePage() {
                   </span>
                 ))}
                 {groups.length === 0 && (
-                  <p className="text-sm text-muted-foreground">{t("none")}</p>
+                  <p className="text-sm text-muted-foreground">{t("empty_groups_hint")}</p>
                 )}
               </div>
             </div>
           </section>
-
 
           <section>
             <h2 className="mb-3 font-display text-xl font-bold">{t("invite_staff")}</h2>
@@ -236,9 +249,7 @@ function PeoplePage() {
                 </div>
               ))}
               {(data?.invites ?? []).length === 0 && (
-                <p className="cozy-card p-5 text-center text-sm text-muted-foreground">
-                  {t("none")}
-                </p>
+                <EmptyState title={t("empty_invites_title")} hint={t("empty_invites_hint")} />
               )}
             </div>
           </section>

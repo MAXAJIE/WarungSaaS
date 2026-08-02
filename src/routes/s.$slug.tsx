@@ -83,6 +83,7 @@ function StorePage() {
 
   const storageKey = `warung.guest.${slug}`;
   const layoutKey = `warung.layout.${slug}`;
+  const cartKey = `warung.cart.${slug}`;
   const [guestToken, setGuestToken] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [lines, setLines] = useState<CartLine[]>([]);
@@ -92,6 +93,11 @@ function StorePage() {
   const [scanOpen, setScanOpen] = useState(false);
   /** Per-device category arrangement. Nothing here is ever sent to the server. */
   const [order, setOrder] = useState<string[]>([]);
+  /**
+   * A submitted ticket hides the menu. The customer can reopen it to add on,
+   * but only until the cashier scans the QR.
+   */
+  const [addingMore, setAddingMore] = useState(false);
 
   useEffect(() => {
     setGuestToken(localStorage.getItem(storageKey));
@@ -101,8 +107,21 @@ function StorePage() {
     } catch {
       /* a corrupt layout just falls back to the menu order */
     }
+    try {
+      // The cart survives a refresh so "add more items" can resend the whole
+      // basket, not just the newest line.
+      const rawCart = localStorage.getItem(cartKey);
+      if (rawCart) setLines(JSON.parse(rawCart) as CartLine[]);
+    } catch {
+      /* a corrupt cart simply starts empty */
+    }
     setHydrated(true);
-  }, [storageKey, layoutKey]);
+  }, [storageKey, layoutKey, cartKey]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(cartKey, JSON.stringify(lines));
+  }, [lines, cartKey, hydrated]);
 
   useEffect(() => {
     const id = setInterval(() => setTick((x) => x + 1), 1000);
@@ -128,6 +147,25 @@ function StorePage() {
       setGuestToken(null);
     }
   }, [orderQuery.data, storageKey]);
+
+  useEffect(() => {
+    // Remember this stall so /order can offer it as a one-tap return visit.
+    const name = menuQuery.data?.store?.name;
+    if (!name) return;
+    try {
+      const raw = localStorage.getItem("warung.recent");
+      const list = raw
+        ? (JSON.parse(raw) as Array<{ slug: string; name: string; at: number }>)
+        : [];
+      const next = [{ slug, name, at: Date.now() }, ...list.filter((r) => r.slug !== slug)].slice(
+        0,
+        5,
+      );
+      localStorage.setItem("warung.recent", JSON.stringify(next));
+    } catch {
+      /* remembering a stall is a convenience, never a blocker */
+    }
+  }, [menuQuery.data?.store?.name, slug]);
 
   const liveOrder = orderQuery.data && !orderQuery.data.gone ? orderQuery.data.order : null;
   const live = orderQuery.data && !orderQuery.data.gone ? orderQuery.data : null;
@@ -188,8 +226,7 @@ function StorePage() {
       }));
 
   const saveMutation = useMutation({
-    mutationFn: async () =>
-      doSaveCart({ data: { slug, guestToken, note, items: cartPayload() } }),
+    mutationFn: async () => doSaveCart({ data: { slug, guestToken, note, items: cartPayload() } }),
     onSuccess: (res) => {
       localStorage.setItem(storageKey, res.guest_token);
       setGuestToken(res.guest_token);
@@ -213,7 +250,9 @@ function StorePage() {
       return doSubmit({ data: { guestToken: token! } });
     },
     onSuccess: () => {
-      setLines([]);
+      // The basket is kept (not cleared) so an add-on resends every line, but
+      // the ordering UI closes: the ticket is with the cashier now.
+      setAddingMore(false);
       qc.invalidateQueries({ queryKey: ["guest-order"] });
       toast.success(t("order_submitted"));
     },
@@ -225,8 +264,10 @@ function StorePage() {
     mutationFn: async () => doCancel({ data: { guestToken: guestToken! } }),
     onSuccess: () => {
       localStorage.removeItem(storageKey);
+      localStorage.removeItem(cartKey);
       setGuestToken(null);
       setLines([]);
+      setAddingMore(false);
       qc.invalidateQueries({ queryKey: ["guest-order"] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -243,10 +284,20 @@ function StorePage() {
       const opt = product.options.find((o) => o.id === optionId);
       const val = opt?.values.find((v) => v.id === valueId);
       return opt && val
-        ? [{ option_id: opt.id, value_id: val.id, label: `${opt.name}: ${val.label}`, price_delta: val.price_delta }]
+        ? [
+            {
+              option_id: opt.id,
+              value_id: val.id,
+              label: `${opt.name}: ${val.label}`,
+              price_delta: val.price_delta,
+            },
+          ]
         : [];
     });
-    const key = lineKey(product.id, options.map((o) => o.value_id));
+    const key = lineKey(
+      product.id,
+      options.map((o) => o.value_id),
+    );
     setLines((prev) => {
       const found = prev.find((l) => l.key === key);
       if (found) return prev.map((l) => (l.key === key ? { ...l, qty: l.qty + 1 } : l));
@@ -288,6 +339,14 @@ function StorePage() {
   const qrSeconds = liveOrder?.qr_expires_at ? secondsLeft(liveOrder.qr_expires_at) : 0;
   const prepping =
     !!liveOrder && ["approved", "preparing", "kitchen_done", "received"].includes(liveOrder.status);
+  const submitted = liveOrder?.status === "submitted";
+  const closed = !!liveOrder && ["cancelled", "completed"].includes(liveOrder.status);
+  /**
+   * Ordering stays open only while the ticket is still a cart, or while the
+   * customer has explicitly reopened a submitted ticket to add on. Once the
+   * cashier scans it, the menu disappears entirely.
+   */
+  const orderingOpen = !liveOrder || liveOrder.status === "cart" || (submitted && addingMore);
 
   return (
     <div className="grain min-h-screen bg-background pb-40">
@@ -320,85 +379,89 @@ function StorePage() {
           </p>
         )}
 
-        {/* Widget 1 — Start your order */}
-        <section className="cozy-card p-5">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="font-display text-lg font-bold">{t("start_your_order")}</h2>
-            <span className="text-xs text-muted-foreground">{t("arrangement")}</span>
-          </div>
-
-          {!products.length ? (
-            <div className="mt-4">
-              <EmptyState title={t("empty_cart")} hint={t("reminder_1")} />
+        {/* Widget 1 — Start your order. Hidden once the ticket is submitted. */}
+        {orderingOpen && (
+          <section className="cozy-card p-5">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="font-display text-lg font-bold">{t("start_your_order")}</h2>
+              <span className="text-xs text-muted-foreground">{t("arrangement")}</span>
             </div>
-          ) : (
-            <div className="mt-4 space-y-7">
-              {categories.map(([cat, list], index) => (
-                <div key={cat}>
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="font-display text-base font-bold">{cat}</h3>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        aria-label={`move ${cat} up`}
-                        disabled={index === 0}
-                        onClick={() => moveCategory(cat, -1)}
-                        className="soft-press grid size-8 place-items-center rounded-full border border-border disabled:opacity-40"
-                      >
-                        <ArrowUp className="size-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`move ${cat} down`}
-                        disabled={index === categories.length - 1}
-                        onClick={() => moveCategory(cat, 1)}
-                        className="soft-press grid size-8 place-items-center rounded-full border border-border disabled:opacity-40"
-                      >
-                        <ArrowDown className="size-3.5" />
-                      </button>
+
+            {!products.length ? (
+              <div className="mt-4">
+                <EmptyState title={t("empty_menu_title")} hint={t("empty_menu_hint")} />
+              </div>
+            ) : (
+              <div className="mt-4 space-y-7">
+                {categories.map(([cat, list], index) => (
+                  <div key={cat}>
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="font-display text-base font-bold">{cat}</h3>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          aria-label={`move ${cat} up`}
+                          disabled={index === 0}
+                          onClick={() => moveCategory(cat, -1)}
+                          className="soft-press grid size-8 place-items-center rounded-full border border-border disabled:opacity-40"
+                        >
+                          <ArrowUp className="size-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`move ${cat} down`}
+                          disabled={index === categories.length - 1}
+                          onClick={() => moveCategory(cat, 1)}
+                          className="soft-press grid size-8 place-items-center rounded-full border border-border disabled:opacity-40"
+                        >
+                          <ArrowDown className="size-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid gap-3">
+                      {list.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          disabled={locked || !store.is_open || p.sold_out}
+                          onClick={() => setDetail(p)}
+                          className="cozy-card flex items-center gap-3 p-3 text-left disabled:opacity-60"
+                        >
+                          {p.photo_signed_url ? (
+                            <img
+                              src={p.photo_signed_url}
+                              alt={productName(p)}
+                              loading="lazy"
+                              className="size-16 shrink-0 rounded-2xl object-cover"
+                            />
+                          ) : (
+                            <span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-secondary text-secondary-foreground">
+                              <Soup className="size-6" />
+                            </span>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-semibold">{productName(p)}</p>
+                            {p.description && (
+                              <p className="truncate text-xs text-muted-foreground">
+                                {p.description}
+                              </p>
+                            )}
+                            <p className="mt-0.5 text-sm font-bold text-primary">
+                              {formatMoney(p.sell_price, currency)}
+                            </p>
+                          </div>
+                          <span className="soft-press shrink-0 rounded-full bg-primary px-4 py-2 text-sm font-bold text-primary-foreground">
+                            {p.options.length ? t("customise") : t("add_to_order")}
+                          </span>
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  <div className="mt-3 grid gap-3">
-                    {list.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        disabled={locked || !store.is_open || p.sold_out}
-                        onClick={() => setDetail(p)}
-                        className="cozy-card flex items-center gap-3 p-3 text-left disabled:opacity-60"
-                      >
-                        {p.photo_signed_url ? (
-                          <img
-                            src={p.photo_signed_url}
-                            alt={productName(p)}
-                            loading="lazy"
-                            className="size-16 shrink-0 rounded-2xl object-cover"
-                          />
-                        ) : (
-                          <span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-secondary text-secondary-foreground">
-                            <Soup className="size-6" />
-                          </span>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate font-semibold">{productName(p)}</p>
-                          {p.description && (
-                            <p className="truncate text-xs text-muted-foreground">{p.description}</p>
-                          )}
-                          <p className="mt-0.5 text-sm font-bold text-primary">
-                            {formatMoney(p.sell_price, currency)}
-                          </p>
-                        </div>
-                        <span className="soft-press shrink-0 rounded-full bg-primary px-4 py-2 text-sm font-bold text-primary-foreground">
-                          {p.options.length ? t("customise") : t("add_to_order")}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* Widget 2 — Order detail */}
         <section className="cozy-card p-5">
@@ -415,7 +478,7 @@ function StorePage() {
             )}
           </div>
 
-          {liveOrder && liveOrder.status !== "cart" ? (
+          {liveOrder && liveOrder.status !== "cart" && !addingMore ? (
             <div className="mt-4 space-y-4">
               <div>
                 <p className="text-xs font-semibold uppercase text-muted-foreground">
@@ -486,7 +549,47 @@ function StorePage() {
                 </button>
               )}
 
-              {!locked && (
+              {submitted && (
+                <div className="space-y-2">
+                  <p className="rounded-2xl bg-muted px-4 py-3 text-sm text-muted-foreground">
+                    {t("ordering_closed_hint")}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setAddingMore(true)}
+                    className="soft-press w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm font-bold"
+                  >
+                    <Plus className="mr-1 inline size-4" /> {t("add_more_items")}
+                  </button>
+                  <p className="text-xs text-muted-foreground">{t("add_more_hint")}</p>
+                </div>
+              )}
+
+              {closed && (
+                <div className="space-y-2">
+                  <p className="rounded-2xl bg-muted px-4 py-3 text-sm text-muted-foreground">
+                    {liveOrder.status === "cancelled" ? t("order_cancelled_hint") : t("reminder_3")}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // A closed ticket is finished for good; a fresh one gets
+                      // its own guest token and its own QR.
+                      localStorage.removeItem(storageKey);
+                      localStorage.removeItem(cartKey);
+                      setGuestToken(null);
+                      setLines([]);
+                      setAddingMore(false);
+                      qc.invalidateQueries({ queryKey: ["guest-order"] });
+                    }}
+                    className="soft-press w-full rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-lift"
+                  >
+                    {t("order_again")}
+                  </button>
+                </div>
+              )}
+
+              {!locked && !closed && (
                 <button
                   type="button"
                   onClick={() => cancelMutation.mutate()}
@@ -498,7 +601,7 @@ function StorePage() {
             </div>
           ) : lines.length === 0 ? (
             <div className="mt-4">
-              <EmptyState title={t("empty_cart")} hint={t("reminder_1")} />
+              <EmptyState title={t("empty_cart")} hint={t("empty_cart_hint")} />
             </div>
           ) : (
             <div className="mt-4 space-y-3">
@@ -567,7 +670,7 @@ function StorePage() {
         </section>
       </main>
 
-      {lines.length > 0 && !locked && (
+      {lines.length > 0 && !locked && orderingOpen && (
         <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 p-4 backdrop-blur">
           <div className="mx-auto flex max-w-3xl items-center gap-3">
             <div className="flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold">
@@ -579,10 +682,10 @@ function StorePage() {
             <button
               type="button"
               disabled={saveMutation.isPending}
-              onClick={() => saveMutation.mutate()}
+              onClick={() => (addingMore ? setAddingMore(false) : saveMutation.mutate())}
               className="soft-press rounded-2xl border border-border px-4 py-3 text-sm font-bold"
             >
-              {t("save")}
+              {addingMore ? t("back") : t("save")}
             </button>
             <button
               type="button"
@@ -590,7 +693,11 @@ function StorePage() {
               onClick={() => submitMutation.mutate()}
               className="soft-press rounded-2xl bg-primary px-5 py-3 text-sm font-bold text-primary-foreground shadow-lift disabled:opacity-60"
             >
-              {submitMutation.isPending ? t("loading") : t("submit_order")}
+              {submitMutation.isPending
+                ? t("loading")
+                : addingMore
+                  ? t("done_adding")
+                  : t("submit_order")}
             </button>
           </div>
         </div>

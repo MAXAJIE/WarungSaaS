@@ -146,7 +146,6 @@ function Landing() {
           ))}
         </section>
 
-
         <section className="mt-16">
           <h2 className="text-center font-display text-3xl font-bold">How it works</h2>
           <p className="mx-auto mt-2 max-w-lg text-center text-sm text-muted-foreground">
@@ -257,12 +256,21 @@ function Landing() {
             Sign up as the owner, then invite your kitchen and pickup crew with a one-time code.
             Vouchers, lucky-draw gifts and daily profit reports are built in.
           </p>
-          <Link
-            to="/auth"
-            className="soft-press rounded-full bg-primary px-6 py-3 text-sm font-bold text-primary-foreground shadow-lift"
-          >
-            {t("sign_up")}
-          </Link>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <Link
+              to="/auth"
+              className="soft-press rounded-full bg-primary px-6 py-3 text-sm font-bold text-primary-foreground shadow-lift"
+            >
+              {t("sign_up")}
+            </Link>
+            {/* Customers who arrive without scanning start here. */}
+            <Link
+              to="/order"
+              className="soft-press rounded-full border border-border bg-card px-6 py-3 text-sm font-bold"
+            >
+              {t("landing_scan")}
+            </Link>
+          </div>
         </section>
       </main>
 

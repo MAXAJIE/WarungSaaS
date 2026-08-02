@@ -1,5 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
-import { LayoutGrid, List, Maximize2, Minimize2, Search, SlidersHorizontal } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Check,
+  Filter,
+  LayoutGrid,
+  List,
+  Maximize2,
+  Minimize2,
+  Search,
+  SlidersHorizontal,
+} from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -88,25 +97,7 @@ export function ViewToolbar({
         />
       </label>
 
-      {filters && filters.length > 1 && (
-        <div className="flex gap-1 overflow-x-auto rounded-2xl border border-border bg-card p-1">
-          {filters.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              onClick={() => set({ filter: f.id })}
-              className={cn(
-                "whitespace-nowrap rounded-xl px-3 py-1.5 text-xs font-semibold transition-all duration-200",
-                prefs.filter === f.id
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-muted",
-              )}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-      )}
+      {filters && filters.length > 1 && <FilterMenu prefs={prefs} set={set} filters={filters} />}
 
       <div className="flex gap-1 rounded-2xl border border-border bg-card p-1">
         {SIZES.map((s) => (
@@ -128,10 +119,10 @@ export function ViewToolbar({
       </div>
 
       <div className="flex gap-1 rounded-2xl border border-border bg-card p-1">
-        {([
+        {[
           { id: "grid" as const, icon: LayoutGrid },
           { id: "list" as const, icon: List },
-        ]).map((l) => (
+        ].map((l) => (
           <button
             key={l.id}
             type="button"
@@ -148,6 +139,89 @@ export function ViewToolbar({
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Status / grouping picker. A row of pills pushed the size and arrangement
+ * controls off screen as soon as a stall had a few categories, so the whole
+ * list collapses behind one filter icon and only opens when asked.
+ */
+function FilterMenu({
+  prefs,
+  set,
+  filters,
+}: {
+  prefs: ViewPrefs;
+  set: (patch: Partial<ViewPrefs>) => void;
+  filters: Array<{ id: string; label: string }>;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const active = filters.find((f) => f.id === prefs.filter) ?? filters[0]!;
+  const filtered = prefs.filter !== "all";
+
+  return (
+    <div ref={boxRef} className="relative">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={t("filter")}
+        title={`${t("filter")}: ${active.label}`}
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "soft-press inline-flex items-center gap-2 rounded-2xl border border-border bg-card px-3 py-2 text-xs font-semibold transition-colors",
+          filtered && "border-primary text-primary",
+        )}
+      >
+        <Filter className="size-4" />
+        {filtered && <span className="max-w-[9rem] truncate">{active.label}</span>}
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 z-40 mt-2 max-h-72 w-52 overflow-y-auto rounded-2xl border border-border bg-card p-1.5 shadow-lift"
+        >
+          {filters.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={prefs.filter === f.id}
+              onClick={() => {
+                set({ filter: f.id });
+                setOpen(false);
+              }}
+              className={cn(
+                "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-semibold transition-colors",
+                prefs.filter === f.id ? "bg-primary text-primary-foreground" : "hover:bg-muted",
+              )}
+            >
+              <Check className={cn("size-3.5", prefs.filter === f.id ? "" : "opacity-0")} />
+              <span className="min-w-0 flex-1 truncate">{f.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

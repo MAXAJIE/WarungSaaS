@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthCallbackRouteImport } from './routes/auth-callback'
+import { Route as OrderRouteImport } from './routes/order'
 import { Route as AuthenticatedAnalyticsRouteImport } from './routes/_authenticated/analytics'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedLogsRouteImport } from './routes/_authenticated/logs'
@@ -40,6 +41,11 @@ const AuthRoute = AuthRouteImport.update({
 const AuthCallbackRoute = AuthCallbackRouteImport.update({
   id: '/auth-callback',
   path: '/auth-callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OrderRoute = OrderRouteImport.update({
+  id: '/order',
+  path: '/order',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedAnalyticsRoute = AuthenticatedAnalyticsRouteImport.update({
@@ -92,6 +98,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/auth-callback': typeof AuthCallbackRoute
+  '/order': typeof OrderRoute
   '/analytics': typeof AuthenticatedAnalyticsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/logs': typeof AuthenticatedLogsRoute
@@ -106,6 +113,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/auth-callback': typeof AuthCallbackRoute
+  '/order': typeof OrderRoute
   '/analytics': typeof AuthenticatedAnalyticsRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/logs': typeof AuthenticatedLogsRoute
@@ -122,6 +130,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/auth-callback': typeof AuthCallbackRoute
+  '/order': typeof OrderRoute
   '/_authenticated/analytics': typeof AuthenticatedAnalyticsRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/logs': typeof AuthenticatedLogsRoute
@@ -138,6 +147,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/auth-callback'
+    | '/order'
     | '/analytics'
     | '/dashboard'
     | '/logs'
@@ -152,6 +162,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/auth-callback'
+    | '/order'
     | '/analytics'
     | '/dashboard'
     | '/logs'
@@ -167,6 +178,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/auth-callback'
+    | '/order'
     | '/_authenticated/analytics'
     | '/_authenticated/dashboard'
     | '/_authenticated/logs'
@@ -183,6 +195,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
+  OrderRoute: typeof OrderRoute
   SSlugRoute: typeof SSlugRoute
 }
 
@@ -214,6 +227,13 @@ declare module '@tanstack/react-router' {
       path: '/auth-callback'
       fullPath: '/auth-callback'
       preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/order': {
+      id: '/order'
+      path: '/order'
+      fullPath: '/order'
+      preLoaderRoute: typeof OrderRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/analytics': {
@@ -312,6 +332,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   AuthCallbackRoute: AuthCallbackRoute,
+  OrderRoute: OrderRoute,
   SSlugRoute: SSlugRoute,
 }
 export const routeTree = rootRouteImport

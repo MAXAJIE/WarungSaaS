@@ -3,11 +3,24 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Ban, Check, ChevronDown, Minus, Plus, QrCode, RefreshCw, Soup, Store, Timer, UtensilsCrossed } from "lucide-react";
+import {
+  Ban,
+  Check,
+  ChevronDown,
+  Minus,
+  Plus,
+  QrCode,
+  RefreshCw,
+  Soup,
+  Store,
+  Timer,
+  UtensilsCrossed,
+} from "lucide-react";
 import { Loading, StaffShell, useMe, type StoreRole } from "@/components/staff-shell";
 import { EmptyState } from "@/components/empty-state";
 import { OrderProgress } from "@/components/order-progress";
-import { QrScannerBox } from "@/components/qr-scanner-box";
+import { QrScannerBox, parsePromoCode } from "@/components/qr-scanner-box";
+import { ConfirmDialog, Modal } from "@/components/modal";
 import { useI18n, statusKey } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
 import {
@@ -62,7 +75,13 @@ function DashboardPage() {
   const roles = (me.data.roles?.length ? me.data.roles : [me.data.member.role]) as StoreRole[];
   const isOwner = roles.includes("owner");
   const isCashier = roles.includes("cashier");
-  const title = isOwner ? "Owner" : isCashier ? "Counter" : roles.includes("kitchen") ? "Kitchen" : "Pickup";
+  const title = isOwner
+    ? "Owner"
+    : isCashier
+      ? "Counter"
+      : roles.includes("kitchen")
+        ? "Kitchen"
+        : "Pickup";
   return (
     <StaffShell title={title} roles={roles} storeName={me.data.store?.name ?? null}>
       {/* One board per hat: the counter board, then any crew board the same
@@ -142,9 +161,7 @@ function Onboarding() {
                   disabled={!active}
                   onClick={() => setInvite({ ...invite, role: r.id })}
                   className={`flex items-center gap-3 rounded-2xl border p-4 text-left transition-all duration-200 ${
-                    active
-                      ? "border-primary bg-primary/10 shadow-lift"
-                      : "border-border opacity-45"
+                    active ? "border-primary bg-primary/10 shadow-lift" : "border-border opacity-45"
                   }`}
                 >
                   <span className="grid size-10 place-items-center rounded-2xl bg-card">
@@ -217,75 +234,72 @@ function Onboarding() {
           </div>
         )}
 
-
-      {path === "owner" && (
-        <div className="cozy-card p-6 duration-300 animate-in fade-in">
-          <h1 className="font-display text-2xl font-bold">{t("create_store")}</h1>
-          <div className="mt-4 space-y-3">
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={t("store_name")}
-              className="w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm outline-none focus:border-primary"
-            />
-            <input
-              value={slug}
-              onChange={(e) => setSlug(e.target.value)}
-              placeholder={t("store_slug")}
-              className="w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm outline-none focus:border-primary"
-            />
-            <p className="text-xs text-muted-foreground">{t("store_slug_hint")}</p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setPath("pick")}
-                className="soft-press rounded-2xl border border-border px-4 py-3 text-sm font-semibold"
-              >
-                {t("back")}
-              </button>
-              <button
-                onClick={() => createM.mutate()}
-                disabled={!name || createM.isPending}
-                className="soft-press flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground disabled:opacity-60"
-              >
-                {t("create_store")}
-              </button>
+        {path === "owner" && (
+          <div className="cozy-card p-6 duration-300 animate-in fade-in">
+            <h1 className="font-display text-2xl font-bold">{t("create_store")}</h1>
+            <div className="mt-4 space-y-3">
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t("store_name")}
+                className="w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm outline-none focus:border-primary"
+              />
+              <input
+                value={slug}
+                onChange={(e) => setSlug(e.target.value)}
+                placeholder={t("store_slug")}
+                className="w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm outline-none focus:border-primary"
+              />
+              <p className="text-xs text-muted-foreground">{t("store_slug_hint")}</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setPath("pick")}
+                  className="soft-press rounded-2xl border border-border px-4 py-3 text-sm font-semibold"
+                >
+                  {t("back")}
+                </button>
+                <button
+                  onClick={() => createM.mutate()}
+                  disabled={!name || createM.isPending}
+                  className="soft-press flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground disabled:opacity-60"
+                >
+                  {t("create_store")}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {path === "code" && (
-        <div className="cozy-card p-6 duration-300 animate-in fade-in">
-          <h2 className="font-display text-xl font-bold">{t("join_store")}</h2>
-          <div className="mt-4 flex gap-2">
-            <input
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder={t("invite_code")}
-              className="flex-1 rounded-2xl border border-border bg-card px-4 py-3 text-sm uppercase outline-none focus:border-primary"
-            />
+        {path === "code" && (
+          <div className="cozy-card p-6 duration-300 animate-in fade-in">
+            <h2 className="font-display text-xl font-bold">{t("join_store")}</h2>
+            <div className="mt-4 flex gap-2">
+              <input
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder={t("invite_code")}
+                className="flex-1 rounded-2xl border border-border bg-card px-4 py-3 text-sm uppercase outline-none focus:border-primary"
+              />
+              <button
+                onClick={() => peekM.mutate()}
+                disabled={!code || peekM.isPending}
+                className="soft-press rounded-2xl bg-secondary px-5 py-3 text-sm font-bold text-secondary-foreground disabled:opacity-60"
+              >
+                {t("join")}
+              </button>
+            </div>
             <button
-              onClick={() => peekM.mutate()}
-              disabled={!code || peekM.isPending}
-              className="soft-press rounded-2xl bg-secondary px-5 py-3 text-sm font-bold text-secondary-foreground disabled:opacity-60"
+              onClick={() => setPath("pick")}
+              className="soft-press mt-3 rounded-2xl border border-border px-4 py-2 text-sm font-semibold"
             >
-              {t("join")}
+              {t("back")}
             </button>
           </div>
-          <button
-            onClick={() => setPath("pick")}
-            className="soft-press mt-3 rounded-2xl border border-border px-4 py-2 text-sm font-semibold"
-          >
-            {t("back")}
-          </button>
-        </div>
-      )}
+        )}
       </div>
     </div>
-
   );
 }
-
 
 /* ------------------------- shared bits ------------------------- */
 
@@ -443,11 +457,16 @@ function CashierBoard({ roles }: { roles: StoreRole[] }) {
 
   const currency = orders.data?.store.currency ?? "MYR";
   const list = (orders.data?.orders ?? []) as unknown as OrderRow[];
-  const pending = list.filter((o) => o.status === "submitted");
+  // There is no separate "awaiting payment" queue any more: an unpaid ticket is
+  // simply the first thing in the live list, with the approve button on it.
   const active = list.filter((o) =>
-    ["approved", "preparing", "kitchen_done", "received"].includes(o.status),
+    ["submitted", "approved", "preparing", "kitchen_done", "received"].includes(o.status),
   );
   const done = list.filter((o) => ["completed", "cancelled"].includes(o.status));
+  /** Which order a confirmation dialog is currently asking about. */
+  const [confirm, setConfirm] = useState<{ kind: "cancel" | "handover"; order: OrderRow } | null>(
+    null,
+  );
 
   return (
     <div className="space-y-5">
@@ -471,25 +490,19 @@ function CashierBoard({ roles }: { roles: StoreRole[] }) {
       {tab === "live" && (
         <>
           {orders.isLoading && <Loading />}
-          <Section title={`${t("orders_pending")} (${pending.length})`}>
-            {pending.map((o) => (
-              <OrderCard key={o.id} order={o} currency={currency}>
-                <ActionButton onClick={() => run.mutate(() => approve({ data: { orderId: o.id } }))}>
-                  <Check className="size-4" /> {t("approve_payment")}
-                </ActionButton>
-                <ActionButton
-                  tone="danger"
-                  onClick={() => run.mutate(() => cancel({ data: { orderId: o.id } }))}
-                >
-                  <Ban className="size-4" /> {t("cancel")}
-                </ActionButton>
-              </OrderCard>
-            ))}
-          </Section>
-
-          <Section title={`${t("orders_active")} (${active.length})`}>
+          <Section
+            title={`${t("orders_active")} (${active.length})`}
+            empty={t("empty_active_orders")}
+          >
             {active.map((o) => (
               <OrderCard key={o.id} order={o} currency={currency}>
+                {o.status === "submitted" && (
+                  <ActionButton
+                    onClick={() => run.mutate(() => approve({ data: { orderId: o.id } }))}
+                  >
+                    <Check className="size-4" /> {t("approve_payment")}
+                  </ActionButton>
+                )}
                 {canCook && o.status === "approved" && (
                   <ActionButton
                     tone="muted"
@@ -511,17 +524,13 @@ function CashierBoard({ roles }: { roles: StoreRole[] }) {
                   </ActionButton>
                 )}
                 {canHandOver && ["kitchen_done", "received"].includes(o.status) && (
-                  <ActionButton
-                    onClick={() =>
-                      run.mutate(() => advance({ data: { orderId: o.id, action: "complete" } }))
-                    }
-                  >
+                  <ActionButton onClick={() => setConfirm({ kind: "handover", order: o })}>
                     <Check className="size-4" /> {t("hand_over")}
                   </ActionButton>
                 )}
                 <ActionButton
                   tone="danger"
-                  onClick={() => run.mutate(() => cancel({ data: { orderId: o.id } }))}
+                  onClick={() => setConfirm({ kind: "cancel", order: o })}
                 >
                   <Ban className="size-4" /> {t("cancel")}
                 </ActionButton>
@@ -529,7 +538,7 @@ function CashierBoard({ roles }: { roles: StoreRole[] }) {
             ))}
           </Section>
 
-          <Section title={`${t("orders_done")} (${done.length})`}>
+          <Section title={`${t("orders_done")} (${done.length})`} empty={t("empty_done_orders")}>
             {/* The board stays readable: only the last three closed tickets,
                 with the rest one click away. */}
             {(showAllDone ? done : done.slice(0, 3)).map((o) => (
@@ -542,24 +551,61 @@ function CashierBoard({ roles }: { roles: StoreRole[] }) {
               onClick={() => setShowAllDone((v) => !v)}
               className="soft-press mx-auto flex items-center gap-2 rounded-2xl border border-border bg-card px-4 py-2 text-sm font-semibold"
             >
-              <ChevronDown className={`size-4 transition-transform ${showAllDone ? "rotate-180" : ""}`} />
+              <ChevronDown
+                className={`size-4 transition-transform ${showAllDone ? "rotate-180" : ""}`}
+              />
               {showAllDone ? t("view_less") : `${t("view_more_history")} (${done.length - 3})`}
             </button>
           )}
         </>
       )}
+
+      {/* Cancelling and handing over are both irreversible, so neither happens
+          on a single stray tap. */}
+      <ConfirmDialog
+        open={!!confirm}
+        onClose={() => setConfirm(null)}
+        title={confirm?.kind === "cancel" ? t("confirm_cancel_title") : t("confirm_pickup_title")}
+        message={`${
+          confirm?.kind === "cancel" ? t("confirm_cancel_body") : t("confirm_pickup_body")
+        } ${confirm ? (confirm.order.order_code ?? `#${confirm.order.order_no ?? ""}`) : ""}`.trim()}
+        confirmLabel={
+          confirm?.kind === "cancel" ? t("confirm_cancel_yes") : t("confirm_pickup_yes")
+        }
+        destructive={confirm?.kind === "cancel"}
+        onConfirm={() => {
+          if (!confirm) return;
+          const { kind, order } = confirm;
+          run.mutate(() =>
+            kind === "cancel"
+              ? cancel({ data: { orderId: order.id } })
+              : advance({ data: { orderId: order.id, action: "complete" } }),
+          );
+        }}
+      />
     </div>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  children,
+  empty: emptyLabel,
+}: {
+  title: string;
+  children: React.ReactNode;
+  /** Copy shown when this particular list is empty. */
+  empty?: string;
+}) {
   const { t } = useI18n();
   const empty = !Array.isArray(children) || children.length === 0;
   return (
     <section>
       <h2 className="mb-2 font-display text-lg font-bold">{title}</h2>
       {empty ? (
-        <p className="cozy-card p-6 text-center text-sm text-muted-foreground">{t("no_orders")}</p>
+        <p className="cozy-card p-6 text-center text-sm text-muted-foreground">
+          {emptyLabel ?? t("no_orders")}
+        </p>
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{children}</div>
       )}
@@ -578,6 +624,8 @@ function ScanPanel() {
 
   const [order, setOrder] = useState<OrderRow | null>(null);
   const [voucherCode, setVoucherCode] = useState("");
+  /** Vouchers are printed as QR codes, so the code can be scanned as well as typed. */
+  const [scanVoucher, setScanVoucher] = useState(false);
   const currency = "MYR";
 
   const findM = useMutation({
@@ -587,7 +635,9 @@ function ScanPanel() {
   });
 
   const voucherM = useMutation({
-    mutationFn: () => applyV({ data: { orderId: order!.id, code: voucherCode } }),
+    // Takes the code as an argument so a freshly scanned QR is applied
+    // immediately instead of waiting for the input state to settle.
+    mutationFn: (code: string) => applyV({ data: { orderId: order!.id, code } }),
     onSuccess: async (res) => {
       if (!res.ok) {
         toast.error(res.reason === "used" ? t("voucher_used") : t("voucher_invalid"));
@@ -612,8 +662,15 @@ function ScanPanel() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const gifts = (promos.data as { gifts?: Array<{ id: string; name: string; threshold: number; is_active: boolean }> } | undefined)?.gifts ?? [];
-  const eligible = order ? gifts.filter((g) => g.is_active && Number(order.total) >= g.threshold) : [];
+  const gifts =
+    (
+      promos.data as
+        | { gifts?: Array<{ id: string; name: string; threshold: number; is_active: boolean }> }
+        | undefined
+    )?.gifts ?? [];
+  const eligible = order
+    ? gifts.filter((g) => g.is_active && Number(order.total) >= g.threshold)
+    : [];
 
   if (!order) {
     return (
@@ -636,13 +693,39 @@ function ScanPanel() {
             className="flex-1 rounded-2xl border border-border bg-card px-4 py-2.5 text-sm uppercase outline-none focus:border-primary"
           />
           <button
-            onClick={() => voucherM.mutate()}
+            type="button"
+            onClick={() => setScanVoucher(true)}
+            aria-label={t("scan_voucher")}
+            title={t("scan_voucher")}
+            className="soft-press grid size-11 shrink-0 place-items-center rounded-2xl border border-border bg-card"
+          >
+            <QrCode className="size-4" />
+          </button>
+          <button
+            onClick={() => voucherM.mutate(voucherCode)}
             disabled={!voucherCode}
             className="soft-press rounded-2xl bg-secondary px-4 py-2.5 text-sm font-bold text-secondary-foreground disabled:opacity-60"
           >
             {t("apply")}
           </button>
         </div>
+
+        <Modal
+          open={scanVoucher}
+          onClose={() => setScanVoucher(false)}
+          title={t("scan_voucher")}
+          subtitle={t("scan_voucher_hint")}
+          size="sm"
+        >
+          <QrScannerBox
+            parse={parsePromoCode}
+            onScan={(code) => {
+              setScanVoucher(false);
+              setVoucherCode(code);
+              voucherM.mutate(code);
+            }}
+          />
+        </Modal>
 
         {eligible.length > 0 && (
           <div>
@@ -686,22 +769,26 @@ function ScanPanel() {
 function WalkInPanel() {
   const { t } = useI18n();
   const qc = useQueryClient();
-  const products = useQuery({ queryKey: ["products"], queryFn: useServerFn(listProducts) as never });
+  const products = useQuery({
+    queryKey: ["products"],
+    queryFn: useServerFn(listProducts) as never,
+  });
   const create = useServerFn(createWalkInOrder);
   const [cart, setCart] = useState<Record<string, number>>({});
   const [name, setName] = useState("");
 
   const rows =
-    (products.data as Array<{
-      id: string;
-      name: string;
-      sell_price: number | string;
-      is_available: boolean;
-    }> | undefined) ?? [];
+    (products.data as
+      | Array<{
+          id: string;
+          name: string;
+          sell_price: number | string;
+          is_available: boolean;
+        }>
+      | undefined) ?? [];
 
   const total = useMemo(
-    () =>
-      rows.reduce((s, p) => s + Number(p.sell_price) * (cart[p.id] ?? 0), 0),
+    () => rows.reduce((s, p) => s + Number(p.sell_price) * (cart[p.id] ?? 0), 0),
     [rows, cart],
   );
 
@@ -794,6 +881,8 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
   });
   const advance = useServerFn(advanceOrder);
   const [live, setLive] = useState(true);
+  /** Handing food over closes the ticket, so it always asks first. */
+  const [handOver, setHandOver] = useState<OrderRow | null>(null);
 
   useEffect(() => {
     if (!live) return;
@@ -813,8 +902,7 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
   const groupProductIds = new Set(
     (
       (productsQ.data as
-        | Array<{ id: string; group_id: string | null; group_ids?: string[] }>
-        | undefined) ?? []
+        Array<{ id: string; group_id: string | null; group_ids?: string[] }> | undefined) ?? []
     )
       .filter((p) =>
         (p.group_ids?.length ? p.group_ids : p.group_id ? [p.group_id] : []).includes(
@@ -864,7 +952,10 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
       {orders.isLoading ? (
         <Loading />
       ) : list.length === 0 ? (
-        <EmptyState title={t("empty_orders_title")} hint={t("empty_orders_hint")} />
+        <EmptyState
+          title={role === "kitchen" ? t("empty_kitchen_title") : t("empty_pickup_title")}
+          hint={role === "kitchen" ? t("empty_kitchen_hint") : t("empty_pickup_hint")}
+        />
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {list.map((o) => (
@@ -905,11 +996,7 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
                       <QrCode className="size-4" /> {t("receive_items")}
                     </ActionButton>
                   )}
-                  <ActionButton
-                    onClick={() =>
-                      run.mutate(() => advance({ data: { orderId: o.id, action: "complete" } }))
-                    }
-                  >
+                  <ActionButton onClick={() => setHandOver(o)}>
                     <Check className="size-4" /> {t("hand_over")}
                   </ActionButton>
                 </>
@@ -918,6 +1005,21 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!handOver}
+        onClose={() => setHandOver(null)}
+        title={t("confirm_pickup_title")}
+        message={`${t("confirm_pickup_body")} ${
+          handOver ? (handOver.order_code ?? `#${handOver.order_no ?? ""}`) : ""
+        }`.trim()}
+        confirmLabel={t("confirm_pickup_yes")}
+        onConfirm={() => {
+          if (!handOver) return;
+          const id = handOver.id;
+          run.mutate(() => advance({ data: { orderId: id, action: "complete" } }));
+        }}
+      />
     </div>
   );
 }

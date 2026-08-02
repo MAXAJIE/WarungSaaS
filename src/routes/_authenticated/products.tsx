@@ -3,17 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import {
-  Check,
-  Eye,
-  GripVertical,
-  ImagePlus,
-  Layers,
-  Pencil,
-  Plus,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Check, Eye, GripVertical, ImagePlus, Layers, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Loading, StaffShell, useStoreGuard } from "@/components/staff-shell";
 import { ConfirmDialog, Modal } from "@/components/modal";
 import { useI18n } from "@/lib/i18n";
@@ -80,6 +70,22 @@ type Draft = typeof blank & { id?: string };
 
 /** The create/edit dialog is split per topic instead of one endless form. */
 type TabId = "basics" | "pricing" | "inventory" | "options" | "combo" | "photo";
+
+/**
+ * A labelled block for a group of buttons. Deliberately a <div>: a <label>
+ * forwards every click inside it to the first control it contains, so the
+ * compartment chips used to toggle when the pointer was nowhere near a chip.
+ */
+function FieldBlock({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="block">
+      <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
+      <div className="mt-1">{children}</div>
+    </div>
+  );
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -220,7 +226,13 @@ function ProductsPage() {
   return (
     <StaffShell
       title={t("nav_products")}
-      roles={(me.data?.roles?.length ? me.data.roles : me.data?.member ? [me.data.member.role] : []) as never}
+      roles={
+        (me.data?.roles?.length
+          ? me.data.roles
+          : me.data?.member
+            ? [me.data.member.role]
+            : []) as never
+      }
       storeName={me.data?.store?.name ?? null}
     >
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -235,7 +247,7 @@ function ProductsPage() {
         </button>
         <button
           onClick={() => {
-            setTab("basics");
+            setTab("combo");
             setDraft({ ...blank, is_combo: true });
           }}
           className="soft-press inline-flex items-center gap-2 rounded-full border border-border bg-card px-5 py-2.5 text-sm font-bold"
@@ -286,11 +298,13 @@ function ProductsPage() {
             <div className="flex flex-wrap gap-1.5 rounded-2xl bg-muted/50 p-1.5">
               {(
                 [
+                  // A plain product has nothing to bundle, so the combo tab is
+                  // not offered at all. In the combo dialog it leads instead.
+                  ...(draft.is_combo ? ([["combo", t("combo")]] as Array<[TabId, string]>) : []),
                   ["basics", t("basics")],
                   ["pricing", t("pricing")],
                   ["inventory", t("inventory")],
                   ["options", t("customisations")],
-                  ["combo", t("combo")],
                   ["photo", t("details")],
                 ] as Array<[TabId, string]>
               ).map(([id, label]) => (
@@ -339,7 +353,7 @@ function ProductsPage() {
                     ))}
                   </datalist>
                 </Field>
-                <Field label={t("compartments")}>
+                <FieldBlock label={t("compartments")}>
                   <div className="flex flex-wrap gap-2">
                     {groups.length === 0 && (
                       <p className="text-xs text-muted-foreground">{t("no_group")}</p>
@@ -373,7 +387,7 @@ function ProductsPage() {
                   <p className="mt-1.5 text-[11px] text-muted-foreground">
                     {t("compartments_hint")}
                   </p>
-                </Field>
+                </FieldBlock>
               </div>
               <Field label={t("description")}>
                 <textarea
@@ -452,15 +466,7 @@ function ProductsPage() {
               <p className="text-[11px] text-muted-foreground">{t("stock_hint")}</p>
             </section>
 
-            <section className={`space-y-3 ${tab === "combo" ? "" : "hidden"}`}>
-              <label className="flex items-center gap-2 text-sm font-semibold">
-                <input
-                  type="checkbox"
-                  checked={draft.is_combo}
-                  onChange={(e) => setDraft({ ...draft, is_combo: e.target.checked })}
-                />
-                {t("make_combo")}
-              </label>
+            <section className={`space-y-3 ${tab === "combo" && draft.is_combo ? "" : "hidden"}`}>
               {draft.is_combo && (
                 <div className="rounded-2xl border border-border bg-muted/30 p-3">
                   <p className="mb-2 text-xs font-semibold text-muted-foreground">
@@ -574,7 +580,6 @@ function ProductsPage() {
                 {t("available")}
               </label>
             </section>
-
           </div>
         )}
       </Modal>
@@ -606,9 +611,9 @@ function ProductsPage() {
         <Loading />
       ) : rows.length === 0 ? (
         <EmptyState
-          title={t("empty_products_title")}
-          hint={t("empty_products_hint")}
-          actionLabel={t("new_product")}
+          title={allRows.length ? t("empty_products_filtered_title") : t("empty_products_title")}
+          hint={allRows.length ? t("empty_products_filtered_hint") : t("empty_products_hint")}
+          {...(allRows.length ? {} : { actionLabel: t("new_product") })}
           onAction={() => {
             setTab("basics");
             setDraft({ ...blank });
@@ -625,9 +630,7 @@ function ProductsPage() {
               onDrop={() => canDrag && onDrop(p.id)}
               className={`cozy-card flex items-start gap-3 transition-transform duration-200 hover:-translate-y-0.5 ${viewPadClass(prefs)} ${canDrag ? "cursor-grab active:cursor-grabbing" : ""}`}
             >
-              {canDrag && (
-                <GripVertical className="mt-1 size-4 shrink-0 text-muted-foreground" />
-              )}
+              {canDrag && <GripVertical className="mt-1 size-4 shrink-0 text-muted-foreground" />}
               {p.photo_signed_url && (
                 <img
                   src={p.photo_signed_url}
@@ -680,7 +683,7 @@ function ProductsPage() {
               <div className="flex flex-col gap-2">
                 <button
                   onClick={() => {
-                    setTab("basics");
+                    setTab(p.is_combo ? "combo" : "basics");
                     setDraft({
                       id: p.id,
                       name: p.name,

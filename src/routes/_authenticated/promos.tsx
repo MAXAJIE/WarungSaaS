@@ -7,6 +7,7 @@ import { Gift, Plus, Ticket, Trash2 } from "lucide-react";
 import { ViewToolbar, useViewPrefs, viewPadClass } from "@/components/view-toolbar";
 import { Loading, StaffShell, useStoreGuard } from "@/components/staff-shell";
 import { ConfirmDialog, Modal } from "@/components/modal";
+import { EmptyState } from "@/components/empty-state";
 import { useI18n } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
 import {
@@ -45,7 +46,11 @@ function PromosPage() {
   const { me, hasStore } = useStoreGuard();
   const qc = useQueryClient();
   const { prefs, set } = useViewPrefs("promos");
-  const promos = useQuery({ queryKey: ["promos"], queryFn: useServerFn(listPromos) as never, enabled: hasStore });
+  const promos = useQuery({
+    queryKey: ["promos"],
+    queryFn: useServerFn(listPromos) as never,
+    enabled: hasStore,
+  });
   const saveV = useServerFn(upsertVoucher);
   const delV = useServerFn(deleteVoucher);
   const saveG = useServerFn(upsertGift);
@@ -89,7 +94,13 @@ function PromosPage() {
   return (
     <StaffShell
       title={t("nav_promos")}
-      roles={(me.data?.roles?.length ? me.data.roles : me.data?.member ? [me.data.member.role] : []) as never}
+      roles={
+        (me.data?.roles?.length
+          ? me.data.roles
+          : me.data?.member
+            ? [me.data.member.role]
+            : []) as never
+      }
       storeName={me.data?.store?.name ?? null}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -139,222 +150,229 @@ function PromosPage() {
       ) : (
         <div className={prefs.filter === "all" ? "grid gap-5 lg:grid-cols-2" : "grid gap-5"}>
           {prefs.filter !== "gifts" && (
-          <section className="space-y-3">
-            <Modal
-              open={openVoucher}
-              onClose={() => setOpenVoucher(false)}
-              title={t("new_voucher")}
-              size="sm"
-              footer={
-                <>
-                  <button
-                    onClick={() => setOpenVoucher(false)}
-                    className="soft-press flex-1 rounded-2xl border border-border bg-card px-4 py-3 text-sm font-bold"
-                  >
-                    {t("cancel")}
-                  </button>
-                  <button
-                    onClick={() => vM.mutate()}
-                    disabled={!voucher.code || vM.isPending}
-                    className="soft-press flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-lift disabled:opacity-60"
-                  >
-                    {t("save")}
-                  </button>
-                </>
-              }
-            >
-              <div className="space-y-3">
-              <label className="block">
-                <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                  {t("promo_code")}
-                </span>
-                <input
-                  value={voucher.code}
-                  onChange={(e) => setVoucher({ ...voucher, code: e.target.value })}
-                  placeholder={t("promo_code")}
-                  className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm uppercase outline-none focus:border-primary"
-                />
-              </label>
-              <label className="block">
-                <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                  {t("label")}
-                </span>
-                <input
-                  value={voucher.label}
-                  onChange={(e) => setVoucher({ ...voucher, label: e.target.value })}
-                  placeholder="Merdeka treat"
-                  className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-                />
-              </label>
-              <div className="flex gap-2">
-                {(["percent", "fixed"] as const).map((k) => (
-                  <button
-                    key={k}
-                    onClick={() => setVoucher({ ...voucher, kind: k })}
-                    className={`soft-press flex-1 rounded-2xl px-3 py-2 text-sm font-bold ${
-                      voucher.kind === k
-                        ? "bg-primary text-primary-foreground"
-                        : "border border-border bg-card"
-                    }`}
-                  >
-                    {k === "percent" ? t("percent_off") : t("fixed_off")}
-                  </button>
-                ))}
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="block">
-                  <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                    {voucher.kind === "percent" ? t("percent_off") : t("fixed_off")}
-                  </span>
-                  <input
-                    type="number"
-                    min="0"
-                    value={voucher.value}
-                    onChange={(e) => setVoucher({ ...voucher, value: Number(e.target.value) })}
-                    className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-                  />
-                </label>
-                <label className="block">
-                  <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                    {t("min_spend")}
-                  </span>
-                  <input
-                    type="number"
-                    min="0"
-                    value={voucher.min_spend}
-                    onChange={(e) => setVoucher({ ...voucher, min_spend: Number(e.target.value) })}
-                    placeholder={t("min_spend")}
-                    className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-                  />
-                </label>
-              </div>
-              </div>
-            </Modal>
-
-
-            {(data?.vouchers ?? [])
-              .filter((v) =>
-                prefs.query
-                  ? v.code.toLowerCase().includes(prefs.query.trim().toLowerCase())
-                  : true,
-              )
-              .map((v) => (
-              <div
-                key={v.id}
-                className={`cozy-card flex items-center gap-3 ${viewPadClass(prefs)}`}
+            <section className="space-y-3">
+              <Modal
+                open={openVoucher}
+                onClose={() => setOpenVoucher(false)}
+                title={t("new_voucher")}
+                size="sm"
+                footer={
+                  <>
+                    <button
+                      onClick={() => setOpenVoucher(false)}
+                      className="soft-press flex-1 rounded-2xl border border-border bg-card px-4 py-3 text-sm font-bold"
+                    >
+                      {t("cancel")}
+                    </button>
+                    <button
+                      onClick={() => vM.mutate()}
+                      disabled={!voucher.code || vM.isPending}
+                      className="soft-press flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-lift disabled:opacity-60"
+                    >
+                      {t("save")}
+                    </button>
+                  </>
+                }
               >
-                <div className="min-w-0 flex-1">
-                  <p className="font-display text-lg font-bold">{v.code}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {v.kind === "percent" ? `${Number(v.value)}%` : formatMoney(v.value)} ·{" "}
-                    {t("min_spend")} {formatMoney(v.min_spend)} ·{" "}
-                    {v.used_by_order ? t("used") : t("active")}
-                  </p>
+                <div className="space-y-3">
+                  <label className="block">
+                    <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                      {t("promo_code")}
+                    </span>
+                    <input
+                      value={voucher.code}
+                      onChange={(e) => setVoucher({ ...voucher, code: e.target.value })}
+                      placeholder={t("promo_code")}
+                      className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm uppercase outline-none focus:border-primary"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                      {t("label")}
+                    </span>
+                    <input
+                      value={voucher.label}
+                      onChange={(e) => setVoucher({ ...voucher, label: e.target.value })}
+                      placeholder="Merdeka treat"
+                      className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
+                    />
+                  </label>
+                  <div className="flex gap-2">
+                    {(["percent", "fixed"] as const).map((k) => (
+                      <button
+                        key={k}
+                        onClick={() => setVoucher({ ...voucher, kind: k })}
+                        className={`soft-press flex-1 rounded-2xl px-3 py-2 text-sm font-bold ${
+                          voucher.kind === k
+                            ? "bg-primary text-primary-foreground"
+                            : "border border-border bg-card"
+                        }`}
+                      >
+                        {k === "percent" ? t("percent_off") : t("fixed_off")}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block">
+                      <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                        {voucher.kind === "percent" ? t("percent_off") : t("fixed_off")}
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        value={voucher.value}
+                        onChange={(e) => setVoucher({ ...voucher, value: Number(e.target.value) })}
+                        className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                        {t("min_spend")}
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        value={voucher.min_spend}
+                        onChange={(e) =>
+                          setVoucher({ ...voucher, min_spend: Number(e.target.value) })
+                        }
+                        placeholder={t("min_spend")}
+                        className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
+                      />
+                    </label>
+                  </div>
                 </div>
-                <button
-                  onClick={() => setConfirmV(v)}
-                  className="soft-press grid size-9 place-items-center rounded-2xl bg-destructive/10 text-destructive"
-                  aria-label={t("delete")}
-                >
-                  <Trash2 className="size-4" />
-                </button>
-              </div>
-            ))}
-          </section>
+              </Modal>
+
+              {(data?.vouchers ?? [])
+                .filter((v) =>
+                  prefs.query
+                    ? v.code.toLowerCase().includes(prefs.query.trim().toLowerCase())
+                    : true,
+                )
+                .map((v) => (
+                  <div
+                    key={v.id}
+                    className={`cozy-card flex items-center gap-3 ${viewPadClass(prefs)}`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-display text-lg font-bold">{v.code}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {v.kind === "percent" ? `${Number(v.value)}%` : formatMoney(v.value)} ·{" "}
+                        {t("min_spend")} {formatMoney(v.min_spend)} ·{" "}
+                        {v.used_by_order ? t("used") : t("active")}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setConfirmV(v)}
+                      className="soft-press grid size-9 place-items-center rounded-2xl bg-destructive/10 text-destructive"
+                      aria-label={t("delete")}
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </div>
+                ))}
+              {!(data?.vouchers ?? []).length && (
+                <EmptyState title={t("empty_vouchers_title")} hint={t("empty_vouchers_hint")} />
+              )}
+            </section>
           )}
 
           {prefs.filter !== "vouchers" && (
-          <section className="space-y-3">
-            <Modal
-              open={openGift}
-              onClose={() => setOpenGift(false)}
-              title={t("new_gift")}
-              size="sm"
-              footer={
-                <>
-                  <button
-                    onClick={() => setOpenGift(false)}
-                    className="soft-press flex-1 rounded-2xl border border-border bg-card px-4 py-3 text-sm font-bold"
-                  >
-                    {t("cancel")}
-                  </button>
-                  <button
-                    onClick={() => gM.mutate()}
-                    disabled={!gift.name || gM.isPending}
-                    className="soft-press flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-lift disabled:opacity-60"
-                  >
-                    {t("save")}
-                  </button>
-                </>
-              }
-            >
-              <div className="space-y-3">
-              <input
-                value={gift.name}
-                onChange={(e) => setGift({ ...gift, name: e.target.value })}
-                placeholder="Kopi O ais"
-                className="w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-              />
-              <input
-                value={gift.note}
-                onChange={(e) => setGift({ ...gift, note: e.target.value })}
-                placeholder={t("description")}
-                className="w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-              />
-              <div className="grid grid-cols-2 gap-2">
-                <label className="block">
-                  <span className="text-xs font-semibold text-muted-foreground">
-                    {t("gift_threshold")}
-                  </span>
-                  <input
-                    type="number"
-                    min="0"
-                    value={gift.threshold}
-                    onChange={(e) => setGift({ ...gift, threshold: Number(e.target.value) })}
-                    className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-                  />
-                </label>
-                <label className="block">
-                  <span className="text-xs font-semibold text-muted-foreground">Stock</span>
-                  <input
-                    type="number"
-                    min="0"
-                    value={gift.stock}
-                    onChange={(e) => setGift({ ...gift, stock: Number(e.target.value) })}
-                    className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-                  />
-                </label>
-              </div>
-              </div>
-            </Modal>
-
-            {(data?.gifts ?? [])
-              .filter((g) =>
-                prefs.query
-                  ? g.name.toLowerCase().includes(prefs.query.trim().toLowerCase())
-                  : true,
-              )
-              .map((g) => (
-              <div
-                key={g.id}
-                className={`cozy-card flex items-center gap-3 ${viewPadClass(prefs)}`}
+            <section className="space-y-3">
+              <Modal
+                open={openGift}
+                onClose={() => setOpenGift(false)}
+                title={t("new_gift")}
+                size="sm"
+                footer={
+                  <>
+                    <button
+                      onClick={() => setOpenGift(false)}
+                      className="soft-press flex-1 rounded-2xl border border-border bg-card px-4 py-3 text-sm font-bold"
+                    >
+                      {t("cancel")}
+                    </button>
+                    <button
+                      onClick={() => gM.mutate()}
+                      disabled={!gift.name || gM.isPending}
+                      className="soft-press flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-lift disabled:opacity-60"
+                    >
+                      {t("save")}
+                    </button>
+                  </>
+                }
               >
-                <div className="min-w-0 flex-1">
-                  <p className="font-display text-lg font-bold">{g.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    ≥ {formatMoney(g.threshold)} · {g.stock} left
-                  </p>
+                <div className="space-y-3">
+                  <input
+                    value={gift.name}
+                    onChange={(e) => setGift({ ...gift, name: e.target.value })}
+                    placeholder="Kopi O ais"
+                    className="w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
+                  />
+                  <input
+                    value={gift.note}
+                    onChange={(e) => setGift({ ...gift, note: e.target.value })}
+                    placeholder={t("description")}
+                    className="w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block">
+                      <span className="text-xs font-semibold text-muted-foreground">
+                        {t("gift_threshold")}
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        value={gift.threshold}
+                        onChange={(e) => setGift({ ...gift, threshold: Number(e.target.value) })}
+                        className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs font-semibold text-muted-foreground">Stock</span>
+                      <input
+                        type="number"
+                        min="0"
+                        value={gift.stock}
+                        onChange={(e) => setGift({ ...gift, stock: Number(e.target.value) })}
+                        className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
+                      />
+                    </label>
+                  </div>
                 </div>
-                <button
-                  onClick={() => setConfirmG(g)}
-                  className="soft-press grid size-9 place-items-center rounded-2xl bg-destructive/10 text-destructive"
-                  aria-label={t("delete")}
-                >
-                  <Trash2 className="size-4" />
-                </button>
-              </div>
-            ))}
-          </section>
+              </Modal>
+
+              {(data?.gifts ?? [])
+                .filter((g) =>
+                  prefs.query
+                    ? g.name.toLowerCase().includes(prefs.query.trim().toLowerCase())
+                    : true,
+                )
+                .map((g) => (
+                  <div
+                    key={g.id}
+                    className={`cozy-card flex items-center gap-3 ${viewPadClass(prefs)}`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-display text-lg font-bold">{g.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        ≥ {formatMoney(g.threshold)} · {g.stock} left
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setConfirmG(g)}
+                      className="soft-press grid size-9 place-items-center rounded-2xl bg-destructive/10 text-destructive"
+                      aria-label={t("delete")}
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </div>
+                ))}
+              {!(data?.gifts ?? []).length && (
+                <EmptyState title={t("empty_gifts_title")} hint={t("empty_gifts_hint")} />
+              )}
+            </section>
           )}
         </div>
       )}

@@ -12,7 +12,28 @@ export function parseOrderCode(raw: string): string | null {
   return null;
 }
 
-export function QrScannerBox({ onScan }: { onScan: (code: string) => void }) {
+/**
+ * Voucher QR codes carry a promo code, which is shorter and may hold letters,
+ * digits, underscores or dashes. Kept separate from the order parser so a
+ * mistyped order token still fails loudly.
+ */
+export function parsePromoCode(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return null;
+  const last = value.includes("/") ? (value.split(/[/?#]/).filter(Boolean).pop() ?? "") : value;
+  const cleaned = last.trim().replace(/^promo[:=]/i, "");
+  if (/^[a-zA-Z0-9_-]{3,64}$/.test(cleaned)) return cleaned.toUpperCase();
+  return null;
+}
+
+export function QrScannerBox({
+  onScan,
+  parse = parseOrderCode,
+}: {
+  onScan: (code: string) => void;
+  /** Swap in `parsePromoCode` to scan a voucher instead of an order QR. */
+  parse?: (raw: string) => string | null;
+}) {
   const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scannerRef = useRef<{ stop?: () => void; destroy?: () => void } | null>(null);
@@ -50,7 +71,7 @@ export function QrScannerBox({ onScan }: { onScan: (code: string) => void }) {
       const scanner = new QrScanner(
         videoRef.current,
         (result: { data: string }) => {
-          const code = parseOrderCode(result.data);
+          const code = parse(result.data);
           if (!code) {
             setError(t("scan_invalid"));
             return;
@@ -84,7 +105,7 @@ export function QrScannerBox({ onScan }: { onScan: (code: string) => void }) {
       const QrScanner = (await import("qr-scanner")).default;
       const result = await QrScanner.scanImage(file, { returnDetailedScanResult: true });
       const raw = typeof result === "string" ? result : result.data;
-      const code = parseOrderCode(raw);
+      const code = parse(raw);
       if (!code) {
         setError(t("scan_invalid"));
         return;
@@ -99,7 +120,7 @@ export function QrScannerBox({ onScan }: { onScan: (code: string) => void }) {
 
   function submitManual(e: React.FormEvent) {
     e.preventDefault();
-    const code = parseOrderCode(manual);
+    const code = parse(manual);
     if (!code) {
       setError(t("scan_invalid"));
       return;
