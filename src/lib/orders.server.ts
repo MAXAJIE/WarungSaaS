@@ -3,12 +3,17 @@ import {
   QR_TTL_MINUTES,
   logAction,
   loadFullOrder,
+  looseDb,
+  orderLines,
+  orderVoucherBlockers,
+  orderVouchers,
   purgeExpired,
   randomToken,
   recomputeOrder,
   requireCashier,
   requireMember,
   requireRole,
+  toRule,
   type AuthedCtx,
   type StoreRole,
 } from "./warung.server";
@@ -70,12 +75,7 @@ export async function listOrdersImpl(ctx: AuthedCtx) {
       const scoped = await scopeToCompartment(data ?? [], member.group_id);
       return { role: member.role, roles, store, orders: scoped };
     }
-    const { data } = await base.in("status", [
-      "approved",
-      "preparing",
-      "kitchen_done",
-      "received",
-    ]);
+    const { data } = await base.in("status", ["approved", "preparing", "kitchen_done", "received"]);
     return { role: member.role, roles, store, orders: data ?? [] };
   }
 
@@ -90,6 +90,14 @@ export type CounterItemInput = {
   qty: number;
   /** Customisations the waiter picked for the guest. */
   options?: Array<{ option_id: string; value_id: string }>;
+  /**
+   * For a combo: the customisations chosen for each product inside it, so a
+   * "set A" can still be "no ice, extra rice" per component.
+   */
+  combo_parts?: Array<{
+    product_id: string;
+    options?: Array<{ option_id: string; value_id: string }>;
+  }>;
 };
 
 type CounterOptionJoin = {
@@ -100,21 +108,97 @@ type CounterOptionJoin = {
   product_options: { name: string; product_id: string } | null;
 };
 
+/**
+ * Turns counter picks into order_item rows. Prices always come from the
+ * database, never from the browser, and combo component choices are priced the
+ * same way as top-level ones.
+ */
+export async function buildItemRows(storeId: string, orderId: string, items: CounterItemInput[]) {
+  const productIds = Array.from(
+    new Set([
+      ...items.map((i) => i.product_id),
+      ...items.flatMap((i) => (i.combo_parts ?? []).map((c) => c.product_id)),
+    ]),
+  );
+  const { data: products } = await supabaseAdmin
+    .from("products")
+    .select("*")
+    .eq("store_id", storeId)
+    .in("id", productIds);
+
+  const chosenValueIds = Array.from(
+    new Set(
+      items.flatMap((i) => [
+        ...(i.options ?? []).map((o) => o.value_id),
+        ...(i.combo_parts ?? []).flatMap((c) => (c.options ?? []).map((o) => o.value_id)),
+      ]),
+    ),
+  );
+  const { data: optionValues } = chosenValueIds.length
+    ? await supabaseAdmin
+        .from("product_option_values")
+        .select("id,label,price_delta,option_id,product_options(name,product_id)")
+        .in("id", chosenValueIds)
+    : { data: [] as CounterOptionJoin[] };
+
+  const pick = (productId: string, sel: Array<{ value_id: string }> | undefined) =>
+    (sel ?? []).flatMap((s) => {
+      const v = ((optionValues ?? []) as CounterOptionJoin[]).find(
+        (x) => x.id === s.value_id && x.product_options?.product_id === productId,
+      );
+      return v
+        ? [
+            {
+              name: v.product_options?.name ?? "",
+              label: v.label,
+              price_delta: Number(v.price_delta),
+            },
+          ]
+        : [];
+    });
+
+  return items.flatMap((i) => {
+    const p = (products ?? []).find((x) => x.id === i.product_id);
+    if (!p) return [];
+    const picked = pick(p.id, i.options);
+
+    const parts = (i.combo_parts ?? []).flatMap((c) => {
+      const child = (products ?? []).find((x) => x.id === c.product_id);
+      if (!child) return [];
+      const chosen = pick(child.id, c.options);
+      return [{ product_id: child.id, name: child.name, options: chosen }];
+    });
+
+    const addOn =
+      picked.reduce((sum, o) => sum + o.price_delta, 0) +
+      parts.reduce((sum, part) => sum + part.options.reduce((s, o) => s + o.price_delta, 0), 0);
+
+    const labels = [
+      ...picked.map((o) => o.label),
+      ...parts.flatMap((part) => part.options.map((o) => `${part.name}: ${o.label}`)),
+    ];
+
+    return [
+      {
+        order_id: orderId,
+        product_id: p.id,
+        name_snapshot: labels.length ? `${p.name} (${labels.join(", ")})` : p.name,
+        unit_price: Number(p.sell_price) + addOn,
+        unit_cost: p.cost_price,
+        qty: Math.max(1, i.qty),
+        options: picked as never,
+        combo_parts: parts as never,
+      },
+    ];
+  });
+}
+
 export async function createWalkInImpl(
   ctx: AuthedCtx,
   data: { customer_name: string; note?: string; items: CounterItemInput[] },
 ) {
   const { store, member } = await requireCashier(ctx);
   if (!data.items.length) throw new Error("Add at least one item.");
-
-  const { data: products } = await supabaseAdmin
-    .from("products")
-    .select("*")
-    .eq("store_id", store.id)
-    .in(
-      "id",
-      data.items.map((i) => i.product_id),
-    );
 
   const { data: order, error } = await supabaseAdmin
     .from("orders")
@@ -133,44 +217,9 @@ export async function createWalkInImpl(
     .single();
   if (error) throw new Error(error.message);
 
-  // Add-on prices are resolved here, never trusted from the counter screen.
-  const chosenValueIds = Array.from(
-    new Set(data.items.flatMap((i) => (i.options ?? []).map((o) => o.value_id))),
-  );
-  const { data: optionValues } = chosenValueIds.length
-    ? await supabaseAdmin
-        .from("product_option_values")
-        .select("id,label,price_delta,option_id,product_options(name,product_id)")
-        .in("id", chosenValueIds)
-    : { data: [] as CounterOptionJoin[] };
-
-  const rows = data.items.flatMap((i) => {
-    const p = (products ?? []).find((x) => x.id === i.product_id);
-    if (!p) return [];
-    const picked = (i.options ?? []).flatMap((sel) => {
-      const v = ((optionValues ?? []) as CounterOptionJoin[]).find(
-        (x) => x.id === sel.value_id && x.product_options?.product_id === p.id,
-      );
-      return v
-        ? [{ name: v.product_options?.name ?? "", label: v.label, price_delta: Number(v.price_delta) }]
-        : [];
-    });
-    const addOn = picked.reduce((sum, o) => sum + o.price_delta, 0);
-    return [
-      {
-        order_id: order.id,
-        product_id: p.id,
-        name_snapshot: picked.length
-          ? `${p.name} (${picked.map((o) => o.label).join(", ")})`
-          : p.name,
-        unit_price: Number(p.sell_price) + addOn,
-        unit_cost: p.cost_price,
-        qty: Math.max(1, i.qty),
-        options: picked as never,
-      },
-    ];
-  });
-  await supabaseAdmin.from("order_items").insert(rows);
+  const rows = await buildItemRows(store.id, order.id, data.items);
+  if (!rows.length) throw new Error("None of those items are on the menu.");
+  await looseDb().from("order_items").insert(rows);
   await recomputeOrder(order.id);
   await logAction({
     storeId: store.id,
@@ -196,12 +245,22 @@ export async function findOrderByCodeImpl(ctx: AuthedCtx, data: { code: string }
     .eq("qr_token", token)
     .maybeSingle();
   if (!order) throw new Error("EXPIRED_OR_UNKNOWN");
-  if (order.qr_expires_at && new Date(order.qr_expires_at).getTime() < Date.now() && order.status === "submitted") {
+  if (
+    order.qr_expires_at &&
+    new Date(order.qr_expires_at).getTime() < Date.now() &&
+    order.status === "submitted"
+  ) {
     throw new Error("EXPIRED_OR_UNKNOWN");
   }
   return order;
 }
 
+/**
+ * Attaches a scanned voucher to a ticket. Codes that cannot ever apply are
+ * rejected outright; codes whose *terms* are not met yet are attached anyway
+ * and reported as blockers, so the counter can offer the guest the missing item
+ * instead of silently dropping the promo.
+ */
 export async function applyVoucherImpl(ctx: AuthedCtx, data: { orderId: string; code: string }) {
   const { store, member } = await requireCashier(ctx);
   const code = data.code.trim().toUpperCase().split("/").pop() ?? "";
@@ -212,35 +271,166 @@ export async function applyVoucherImpl(ctx: AuthedCtx, data: { orderId: string; 
     .eq("store_id", store.id)
     .maybeSingle();
   if (!order) throw new Error("Order not found.");
-  if (order.status !== "submitted") throw new Error("Discounts can only be added before payment approval.");
+  if (order.status !== "submitted")
+    throw new Error("Discounts can only be added before payment approval.");
 
-  const { data: voucher } = await supabaseAdmin
+  const { data: voucherRow } = await supabaseAdmin
     .from("vouchers")
     .select("*")
     .eq("store_id", store.id)
     .eq("code", code)
     .maybeSingle();
 
-  if (!voucher || !voucher.is_active) return { ok: false, reason: "invalid" as const };
-  if (voucher.used_by_order && voucher.used_by_order !== order.id)
+  if (!voucherRow || !voucherRow.is_active) return { ok: false, reason: "invalid" as const };
+  const rule = toRule(
+    voucherRow as unknown as Record<string, unknown> & { id: string; code: string },
+  );
+  if (rule.usage_limit > 0 && rule.used_count >= rule.usage_limit)
     return { ok: false, reason: "used" as const };
-  if (Number(order.subtotal) < Number(voucher.min_spend))
-    return { ok: false, reason: "min_spend" as const, min: Number(voucher.min_spend) };
+  if (rule.expires_at && new Date(rule.expires_at).getTime() < Date.now())
+    return { ok: false, reason: "expired" as const };
 
-  await supabaseAdmin.from("orders").update({ voucher_id: voucher.id }).eq("id", order.id);
+  const attached = await orderVouchers(order.id);
+  if (attached.some((v) => v.id === rule.id))
+    return { ok: false, reason: "already_applied" as const };
+  // A non-stackable code refuses to sit next to another one.
+  if (attached.length && (!rule.stackable || attached.some((v) => !v.stackable)))
+    return { ok: false, reason: "not_stackable" as const };
+
+  await looseDb().from("order_vouchers").insert({ order_id: order.id, voucher_id: rule.id });
+  if (!order.voucher_id)
+    await supabaseAdmin.from("orders").update({ voucher_id: rule.id }).eq("id", order.id);
+
   const updated = await recomputeOrder(order.id);
+  const blockers = await orderVoucherBlockers(order.id);
   await logAction({
     storeId: store.id,
     actorId: ctx.userId,
     actorLabel: member.display_name,
     orderId: order.id,
     action: "voucher.applied",
-    detail: { code: voucher.code },
+    detail: { code: rule.code },
   });
-  return { ok: true as const, order: updated, voucher };
+  return { ok: true as const, order: updated, voucher: voucherRow, blockers };
 }
 
-export async function setGiftImpl(ctx: AuthedCtx, data: { orderId: string; giftId: string | null }) {
+/** Detaches a scanned code again, e.g. the guest changed their mind. */
+export async function removeVoucherImpl(
+  ctx: AuthedCtx,
+  data: { orderId: string; voucherId: string },
+) {
+  const { store, member } = await requireCashier(ctx);
+  const { data: order } = await supabaseAdmin
+    .from("orders")
+    .select("*")
+    .eq("id", data.orderId)
+    .eq("store_id", store.id)
+    .maybeSingle();
+  if (!order) throw new Error("Order not found.");
+  if (order.status !== "submitted")
+    throw new Error("Discounts can only be changed before payment approval.");
+
+  await looseDb()
+    .from("order_vouchers")
+    .delete()
+    .eq("order_id", order.id)
+    .eq("voucher_id", data.voucherId);
+  if (order.voucher_id === data.voucherId) {
+    const rest = await orderVouchers(order.id);
+    await supabaseAdmin
+      .from("orders")
+      .update({ voucher_id: rest.find((v) => v.id !== data.voucherId)?.id ?? null })
+      .eq("id", order.id);
+  }
+  await recomputeOrder(order.id);
+  await logAction({
+    storeId: store.id,
+    actorId: ctx.userId,
+    actorLabel: member.display_name,
+    orderId: order.id,
+    action: "voucher.removed",
+    detail: { voucherId: data.voucherId },
+  });
+  return loadFullOrder(order.id);
+}
+
+/** Why the ticket cannot be approved yet, if anything. */
+export async function orderBlockersImpl(ctx: AuthedCtx, data: { orderId: string }) {
+  const { store } = await requireCashier(ctx);
+  const { data: order } = await supabaseAdmin
+    .from("orders")
+    .select("id")
+    .eq("id", data.orderId)
+    .eq("store_id", store.id)
+    .maybeSingle();
+  if (!order) throw new Error("Order not found.");
+  return { blockers: await orderVoucherBlockers(order.id) };
+}
+
+/**
+ * Counter amendment: the guest agrees to add the item a promo needs (or drop a
+ * line), so the ticket is edited before payment. The edit is stamped so the
+ * guest's phone can show that their order changed.
+ */
+export async function amendOrderItemsImpl(
+  ctx: AuthedCtx,
+  data: {
+    orderId: string;
+    add?: CounterItemInput[];
+    removeItemIds?: string[];
+    note?: string;
+  },
+) {
+  const { store, member } = await requireCashier(ctx);
+  const { data: order } = await supabaseAdmin
+    .from("orders")
+    .select("*")
+    .eq("id", data.orderId)
+    .eq("store_id", store.id)
+    .maybeSingle();
+  if (!order) throw new Error("Order not found.");
+  if (order.status !== "submitted")
+    throw new Error("An order can only be changed before payment is approved.");
+
+  if (data.removeItemIds?.length) {
+    await supabaseAdmin
+      .from("order_items")
+      .delete()
+      .eq("order_id", order.id)
+      .in("id", data.removeItemIds);
+  }
+  if (data.add?.length) {
+    const rows = await buildItemRows(store.id, order.id, data.add);
+    if (rows.length) await supabaseAdmin.from("order_items").insert(rows as never);
+  }
+
+  const { count } = await supabaseAdmin
+    .from("order_items")
+    .select("id", { count: "exact", head: true })
+    .eq("order_id", order.id);
+  if (!count) throw new Error("An order must keep at least one item.");
+
+  await looseDb()
+    .from("orders")
+    .update({ edited_at: new Date().toISOString(), edited_note: (data.note ?? "").slice(0, 160) })
+    .eq("id", order.id);
+  await recomputeOrder(order.id);
+  await logAction({
+    storeId: store.id,
+    actorId: ctx.userId,
+    actorLabel: member.display_name,
+    orderId: order.id,
+    actorRole: "cashier",
+    action: "order.amended",
+    detail: { added: data.add?.length ?? 0, removed: data.removeItemIds?.length ?? 0 },
+  });
+  return loadFullOrder(order.id);
+}
+
+export async function setGiftImpl(
+  ctx: AuthedCtx,
+  data: { orderId: string; giftId: string | null },
+) {
   const { store, member } = await requireCashier(ctx);
   const { data: order } = await supabaseAdmin
     .from("orders")
@@ -260,6 +450,22 @@ export async function setGiftImpl(ctx: AuthedCtx, data: { orderId: string; giftI
     if (!gift || !gift.is_active) throw new Error("Gift unavailable.");
     if (Number(order.total) < Number(gift.threshold))
       throw new Error("Order total is below the gift threshold.");
+
+    // Gift terms mirror voucher terms: item count and a required product.
+    const g = gift as unknown as Record<string, unknown>;
+    const lines = await orderLines(order.id);
+    const itemCount = lines.reduce((s, l) => s + l.qty, 0);
+    const minItems = Number(g["min_items"] ?? 0);
+    if (minItems > 0 && itemCount < minItems)
+      throw new Error(`This gift needs at least ${minItems} items on the ticket.`);
+    const requiredProduct = g["required_product_id"] as string | null;
+    if (requiredProduct) {
+      const need = Math.max(1, Number(g["required_qty"] ?? 1));
+      const have = lines
+        .filter((l) => l.product_id === requiredProduct)
+        .reduce((s, l) => s + l.qty, 0);
+      if (have < need) throw new Error("This gift needs a specific product on the ticket.");
+    }
   }
   await supabaseAdmin.from("orders").update({ gift_id: data.giftId }).eq("id", order.id);
   await logAction({
@@ -282,20 +488,37 @@ export async function approveOrderImpl(ctx: AuthedCtx, data: { orderId: string }
     .eq("store_id", store.id)
     .maybeSingle();
   if (!order) throw new Error("Order not found.");
-  if (order.status !== "submitted") throw new Error("Only unpaid submitted orders can be approved.");
+  if (order.status !== "submitted")
+    throw new Error("Only unpaid submitted orders can be approved.");
+
+  // A promo whose terms are not met blocks payment. The counter must either
+  // add what the promo needs or drop the code first.
+  const blockers = await orderVoucherBlockers(order.id);
+  if (blockers.length) {
+    const err = new Error(`VOUCHER_TERMS_UNMET:${JSON.stringify(blockers)}`);
+    throw err;
+  }
 
   const { data: numbered } = await supabaseAdmin.rpc("assign_order_no", { p_order: order.id });
   // The pickup number the customer will be called by. Minted once, at payment.
-  const { data: orderCode } = await supabaseAdmin.rpc("assign_order_code" as never, {
-    p_order: order.id,
-  } as never);
+  const { data: orderCode } = await supabaseAdmin.rpc(
+    "assign_order_code" as never,
+    {
+      p_order: order.id,
+    } as never,
+  );
 
-  if (order.voucher_id) {
-    await supabaseAdmin
+  // Every attached code counts one redemption against its usage limit.
+  for (const v of await orderVouchers(order.id)) {
+    await looseDb()
       .from("vouchers")
-      .update({ used_by_order: order.id, used_at: new Date().toISOString() })
-      .eq("id", order.voucher_id)
-      .is("used_by_order", null);
+      .update({
+        used_count: v.used_count + 1,
+        used_by_order: order.id,
+        used_at: new Date().toISOString(),
+        is_active: v.usage_limit > 0 && v.used_count + 1 >= v.usage_limit ? false : true,
+      })
+      .eq("id", v.id);
   }
   if (order.gift_id) {
     const { data: gift } = await supabaseAdmin

@@ -256,7 +256,7 @@ function ProductsPage() {
         </button>
         {me.data?.store?.slug && (
           <a
-            href={`/s/${me.data.store.slug}`}
+            href={`/s/${me.data.store.slug}?preview=1`}
             target="_blank"
             rel="noreferrer"
             className="soft-press inline-flex items-center gap-2 rounded-full border border-border bg-card px-5 py-2.5 text-sm font-bold"
@@ -521,6 +521,33 @@ function ProductsPage() {
                         );
                       })}
                   </div>
+                </div>
+              )}
+              {draft.is_combo && draft.combo_items.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                    {t("contained_item_options")}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {t("contained_item_options_hint")}
+                  </p>
+                  {draft.combo_items.map((ci) => {
+                    const sub = allRows.find((r) => r.id === ci.product_id);
+                    if (!sub) return null;
+                    return (
+                      <details
+                        key={ci.product_id}
+                        className="rounded-2xl border border-border bg-card"
+                      >
+                        <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-bold">
+                          {sub.name}
+                        </summary>
+                        <div className="border-t border-border/70 p-3">
+                          <ProductOptionsEditor productId={ci.product_id} />
+                        </div>
+                      </details>
+                    );
+                  })}
                 </div>
               )}
             </section>

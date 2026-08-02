@@ -31,12 +31,19 @@ import {
   upsertGiftImpl,
   upsertGroupImpl,
   uploadProductPhotoImpl,
+  uploadStoreImageImpl,
   upsertProductImpl,
   upsertVoucherImpl,
+  upsertVoucherTemplateImpl,
+  deleteVoucherTemplateImpl,
+  uploadVoucherArtworkImpl,
+  signVoucherArtworkImpl,
+  type VoucherInput,
+  type VoucherTemplateInput,
+  type GiftInput,
   type ProductInput,
   type StaffRole,
 } from "./staff.server";
-
 
 export const getMe = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -64,6 +71,8 @@ export const updateStore = createServerFn({ method: "POST" })
       is_open?: boolean;
       order_code_template?: string;
       event_spend?: number;
+      logo_path?: string | null;
+      cover_path?: string | null;
     }) => d,
   )
   .handler(async ({ context, data }) => updateStoreImpl(context, data));
@@ -102,6 +111,11 @@ export const uploadProductPhoto = createServerFn({ method: "POST" })
   .inputValidator((d: { base64: string; ext?: string }) => d)
   .handler(async ({ context, data }) => uploadProductPhotoImpl(context, data));
 
+export const uploadStoreImage = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { base64: string; ext?: string; kind: "logo" | "cover" }) => d)
+  .handler(async ({ context, data }) => uploadStoreImageImpl(context, data));
+
 export const listProducts = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => listProductsImpl(context));
@@ -122,36 +136,37 @@ export const listPromos = createServerFn({ method: "GET" })
 
 export const upsertVoucher = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator(
-    (d: {
-      id?: string;
-      code: string;
-      label?: string;
-      kind: "percent" | "fixed";
-      value: number;
-      min_spend?: number;
-      is_active?: boolean;
-    }) => d,
-  )
+  .inputValidator((d: VoucherInput) => d)
   .handler(async ({ context, data }) => upsertVoucherImpl(context, data));
 
 export const deleteVoucher = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: { id: string }) => d)
+  .inputValidator((d: { id?: string; batchId?: string }) => d)
   .handler(async ({ context, data }) => deleteVoucherImpl(context, data));
+
+export const upsertVoucherTemplate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: VoucherTemplateInput) => d)
+  .handler(async ({ context, data }) => upsertVoucherTemplateImpl(context, data));
+
+export const deleteVoucherTemplate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { id: string }) => d)
+  .handler(async ({ context, data }) => deleteVoucherTemplateImpl(context, data));
+
+export const uploadVoucherArtwork = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { dataUrl: string; name?: string }) => d)
+  .handler(async ({ context, data }) => uploadVoucherArtworkImpl(context, data));
+
+export const signVoucherArtwork = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { paths: string[] }) => d)
+  .handler(async ({ context, data }) => signVoucherArtworkImpl(context, data));
 
 export const upsertGift = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator(
-    (d: {
-      id?: string;
-      name: string;
-      note?: string;
-      threshold: number;
-      stock?: number;
-      is_active?: boolean;
-    }) => d,
-  )
+  .inputValidator((d: GiftInput) => d)
   .handler(async ({ context, data }) => upsertGiftImpl(context, data));
 
 export const deleteGift = createServerFn({ method: "POST" })
@@ -175,7 +190,9 @@ export const listGroups = createServerFn({ method: "GET" })
 
 export const upsertGroup = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: { id?: string; name: string; color?: string | null; sort_order?: number }) => d)
+  .inputValidator(
+    (d: { id?: string; name: string; color?: string | null; sort_order?: number }) => d,
+  )
   .handler(async ({ context, data }) => upsertGroupImpl(context, data));
 
 export const deleteGroup = createServerFn({ method: "POST" })
@@ -187,7 +204,6 @@ export const setMemberGroup = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: { memberId: string; group_id: string | null }) => d)
   .handler(async ({ context, data }) => setMemberGroupImpl(context, data));
-
 
 export const requestRoleChange = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

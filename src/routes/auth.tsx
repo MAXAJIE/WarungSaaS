@@ -79,7 +79,7 @@ function AuthPage() {
       navigate({ to: "/dashboard", replace: true });
     } finally {
       setBusy(false);
-     }
+    }
   }
 
   return (

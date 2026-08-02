@@ -15,12 +15,7 @@ export const getMenu = createServerFn({ method: "GET" })
 
 export const saveCart = createServerFn({ method: "POST" })
   .inputValidator(
-    (d: {
-      slug: string;
-      guestToken?: string | null;
-      note?: string;
-      items: CartItemInput[];
-    }) => d,
+    (d: { slug: string; guestToken?: string | null; note?: string; items: CartItemInput[] }) => d,
   )
   .handler(async ({ data }) => saveCartImpl(data));
 

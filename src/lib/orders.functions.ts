@@ -2,17 +2,38 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   advanceOrderImpl,
+  amendOrderItemsImpl,
   applyVoucherImpl,
   approveOrderImpl,
   cancelOrderImpl,
   createWalkInImpl,
   findOrderByCodeImpl,
   listOrdersImpl,
+  orderBlockersImpl,
+  removeVoucherImpl,
   setGiftImpl,
   setSpecialDiscountImpl,
   type CounterItemInput,
 } from "./orders.server";
 import { analyticsImpl } from "./analytics.server";
+
+export const removeVoucher = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { orderId: string; voucherId: string }) => d)
+  .handler(async ({ context, data }) => removeVoucherImpl(context, data));
+
+export const getOrderBlockers = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { orderId: string }) => d)
+  .handler(async ({ context, data }) => orderBlockersImpl(context, data));
+
+export const amendOrderItems = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (d: { orderId: string; add?: CounterItemInput[]; removeItemIds?: string[]; note?: string }) =>
+      d,
+  )
+  .handler(async ({ context, data }) => amendOrderItemsImpl(context, data));
 
 export const listOrders = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -45,7 +66,9 @@ export const approveOrder = createServerFn({ method: "POST" })
 
 export const advanceOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: { orderId: string; action: "start" | "kitchen_done" | "receive" | "complete" }) => d)
+  .inputValidator(
+    (d: { orderId: string; action: "start" | "kitchen_done" | "receive" | "complete" }) => d,
+  )
   .handler(async ({ context, data }) => advanceOrderImpl(context, data));
 
 export const setSpecialDiscount = createServerFn({ method: "POST" })

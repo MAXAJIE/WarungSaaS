@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
+import { ConfirmDialog } from "@/components/modal";
 import {
   deleteProductOption,
   listProductOptions,
@@ -24,6 +25,10 @@ export function ProductOptionsEditor({ productId }: { productId: string }) {
   const save = useServerFn(upsertProductOption);
   const remove = useServerFn(deleteProductOption);
   const [draft, setDraft] = useState<OptionDraft | null>(null);
+  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<{ id: string; name: string } | null>(
+    null,
+  );
+  const [confirmDeleteValueIdx, setConfirmDeleteValueIdx] = useState<number | null>(null);
 
   const options = useQuery({
     queryKey: ["product-options", productId],
@@ -87,7 +92,7 @@ export function ProductOptionsEditor({ productId }: { productId: string }) {
             </button>
             <button
               type="button"
-              onClick={() => delM.mutate(o.id)}
+              onClick={() => setConfirmDeleteGroup({ id: o.id, name: o.name })}
               aria-label={t("delete")}
               className="soft-press grid size-8 place-items-center rounded-xl bg-destructive/10 text-destructive"
             >
@@ -103,7 +108,9 @@ export function ProductOptionsEditor({ productId }: { productId: string }) {
       {!draft && (
         <button
           type="button"
-          onClick={() => setDraft({ name: "", is_required: false, values: [{ label: "", price_delta: 0 }] })}
+          onClick={() =>
+            setDraft({ name: "", is_required: false, values: [{ label: "", price_delta: 0 }] })
+          }
           className="soft-press inline-flex items-center gap-2 rounded-2xl border border-border bg-card px-4 py-2 text-sm font-bold"
         >
           <Plus className="size-4" /> {t("add_option")}
@@ -160,7 +167,9 @@ export function ProductOptionsEditor({ productId }: { productId: string }) {
                 type="button"
                 aria-label={t("delete")}
                 onClick={() =>
-                  setDraft({ ...draft, values: draft.values.filter((_, j) => j !== i) })
+                  v.id
+                    ? setConfirmDeleteValueIdx(i)
+                    : setDraft({ ...draft, values: draft.values.filter((_, j) => j !== i) })
                 }
                 className="soft-press grid size-9 shrink-0 place-items-center rounded-xl bg-destructive/10 text-destructive"
               >
@@ -196,6 +205,31 @@ export function ProductOptionsEditor({ productId }: { productId: string }) {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!confirmDeleteGroup}
+        onClose={() => setConfirmDeleteGroup(null)}
+        onConfirm={() => confirmDeleteGroup && delM.mutate(confirmDeleteGroup.id)}
+        title={t("delete_option_group_title")}
+        message={confirmDeleteGroup?.name ?? ""}
+        confirmLabel={t("delete")}
+        destructive
+      />
+      <ConfirmDialog
+        open={confirmDeleteValueIdx !== null}
+        onClose={() => setConfirmDeleteValueIdx(null)}
+        onConfirm={() => {
+          if (confirmDeleteValueIdx === null || !draft) return;
+          setDraft({
+            ...draft,
+            values: draft.values.filter((_, j) => j !== confirmDeleteValueIdx),
+          });
+        }}
+        title={t("delete_option_value_title")}
+        message={draft?.values[confirmDeleteValueIdx ?? -1]?.label ?? ""}
+        confirmLabel={t("delete")}
+        destructive
+      />
     </div>
   );
 }

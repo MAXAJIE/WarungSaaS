@@ -1,12 +1,16 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   ArrowDown,
+  ArrowRight,
   ArrowUp,
+  Bell,
   Check,
+  ClipboardList,
+  Home,
   Minus,
   Plus,
   RefreshCw,
@@ -14,6 +18,7 @@ import {
   ShoppingBasket,
   Soup,
   Trash2,
+  UtensilsCrossed,
 } from "lucide-react";
 import {
   cancelGuestOrder,
@@ -33,6 +38,9 @@ import { OrderProgress } from "@/components/order-progress";
 import { formatMoney, mmss, secondsLeft } from "@/lib/money";
 
 export const Route = createFileRoute("/s/$slug")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    preview: search["preview"] === "1" || search["preview"] === 1 || search["preview"] === true,
+  }),
   head: ({ params }) => ({
     meta: [
       { title: `Order from ${params.slug} — Warung` },
@@ -70,9 +78,11 @@ function lineKey(productId: string, values: string[]) {
 
 function StorePage() {
   const { slug } = Route.useParams();
+  const { preview: isOwnerPreview } = Route.useSearch();
   const { t, lang } = useI18n();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const detailSectionRef = useRef<HTMLDivElement | null>(null);
 
   const fetchMenu = useServerFn(getMenu);
   const fetchOrder = useServerFn(getGuestOrder);
@@ -98,6 +108,12 @@ function StorePage() {
    * but only until the cashier scans the QR.
    */
   const [addingMore, setAddingMore] = useState(false);
+  /** The welcome screen greets every visit; both buttons lead into the same
+   * page, just scrolled to a different starting widget. */
+  const [screen, setScreen] = useState<"welcome" | "app">("welcome");
+  /** The counter can silently amend a submitted order; we remember the last
+   * edited_at the customer has seen so the notice only shows once per edit. */
+  const [seenEditedAt, setSeenEditedAt] = useState<string | null>(null);
 
   useEffect(() => {
     setGuestToken(localStorage.getItem(storageKey));
@@ -350,17 +366,25 @@ function StorePage() {
 
   return (
     <div className="grain min-h-screen bg-background pb-40">
-      <header className="mx-auto flex max-w-3xl items-center justify-between px-4 py-5">
-        <div className="flex items-center gap-3">
-          <span className="grid size-10 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lift">
+      <header className="mx-auto grid max-w-3xl grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-5 sm:flex sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lift">
             <Soup className="size-5" />
           </span>
-          <div>
-            <h1 className="font-display text-xl font-bold leading-tight">{store.name}</h1>
-            <p className="text-xs text-muted-foreground">{store.tagline || t("tagline")}</p>
+          <div className="min-w-0">
+            <h1 className="truncate font-display text-xl font-bold leading-tight">{store.name}</h1>
+            <p className="truncate text-xs text-muted-foreground">
+              {store.tagline || t("tagline")}
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <Link
+            to="/order"
+            className="soft-press inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs font-semibold"
+          >
+            <Home className="size-4" /> {t("go_main")}
+          </Link>
           <button
             type="button"
             onClick={() => setScanOpen(true)}
@@ -372,7 +396,59 @@ function StorePage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl space-y-6 px-4">
+      {screen === "welcome" && (
+        <main className="mx-auto max-w-3xl px-4 pb-16 pt-6">
+          <section className="cozy-card overflow-hidden p-6 text-center sm:p-10">
+            <span className="mx-auto grid size-14 place-items-center rounded-3xl bg-secondary text-secondary-foreground">
+              <Soup className="size-7" />
+            </span>
+            <p className="mt-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+              {t("welcome_hero_kicker")}
+            </p>
+            <h1 className="mt-2 font-display text-3xl font-bold leading-tight sm:text-4xl">
+              {store.name}
+            </h1>
+            <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+              {store.tagline || t("tagline")}
+            </p>
+
+            <div className="mt-8 grid gap-4 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setScreen("app")}
+                className="group soft-press relative overflow-hidden rounded-3xl bg-primary p-6 text-left text-primary-foreground shadow-lift transition-transform duration-300 hover:-translate-y-1 hover:shadow-cozy"
+              >
+                <UtensilsCrossed className="size-7 transition-transform duration-300 group-hover:scale-110" />
+                <p className="mt-4 font-display text-xl font-bold">{t("welcome_place_order")}</p>
+                <p className="mt-1 text-sm text-primary-foreground/80">
+                  {t("welcome_place_order_sub")}
+                </p>
+                <ArrowRight className="mt-4 size-5 transition-transform duration-300 group-hover:translate-x-1" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setScreen("app");
+                  setTimeout(
+                    () => detailSectionRef.current?.scrollIntoView({ behavior: "smooth" }),
+                    50,
+                  );
+                }}
+                className="group soft-press relative overflow-hidden rounded-3xl border border-border bg-card p-6 text-left shadow-cozy transition-transform duration-300 hover:-translate-y-1 hover:shadow-lift"
+              >
+                <ClipboardList className="size-7 text-primary transition-transform duration-300 group-hover:scale-110" />
+                <p className="mt-4 font-display text-xl font-bold">{t("welcome_order_detail")}</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t("welcome_order_detail_sub")}
+                </p>
+                <ArrowRight className="mt-4 size-5 text-primary transition-transform duration-300 group-hover:translate-x-1" />
+              </button>
+            </div>
+          </section>
+        </main>
+      )}
+
+      <main className={`mx-auto max-w-3xl space-y-6 px-4 ${screen === "app" ? "" : "hidden"}`}>
         {!store.is_open && (
           <p className="cozy-card border-destructive/40 p-4 text-sm font-semibold text-destructive">
             {t("store_closed")}
@@ -384,7 +460,9 @@ function StorePage() {
           <section className="cozy-card p-5">
             <div className="flex items-center justify-between gap-3">
               <h2 className="font-display text-lg font-bold">{t("start_your_order")}</h2>
-              <span className="text-xs text-muted-foreground">{t("arrangement")}</span>
+              {isOwnerPreview && (
+                <span className="text-xs text-muted-foreground">{t("arrangement")}</span>
+              )}
             </div>
 
             {!products.length ? (
@@ -397,26 +475,28 @@ function StorePage() {
                   <div key={cat}>
                     <div className="flex items-center justify-between gap-2">
                       <h3 className="font-display text-base font-bold">{cat}</h3>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          aria-label={`move ${cat} up`}
-                          disabled={index === 0}
-                          onClick={() => moveCategory(cat, -1)}
-                          className="soft-press grid size-8 place-items-center rounded-full border border-border disabled:opacity-40"
-                        >
-                          <ArrowUp className="size-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`move ${cat} down`}
-                          disabled={index === categories.length - 1}
-                          onClick={() => moveCategory(cat, 1)}
-                          className="soft-press grid size-8 place-items-center rounded-full border border-border disabled:opacity-40"
-                        >
-                          <ArrowDown className="size-3.5" />
-                        </button>
-                      </div>
+                      {isOwnerPreview && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            aria-label={`move ${cat} up`}
+                            disabled={index === 0}
+                            onClick={() => moveCategory(cat, -1)}
+                            className="soft-press grid size-8 place-items-center rounded-full border border-border disabled:opacity-40"
+                          >
+                            <ArrowUp className="size-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`move ${cat} down`}
+                            disabled={index === categories.length - 1}
+                            onClick={() => moveCategory(cat, 1)}
+                            className="soft-press grid size-8 place-items-center rounded-full border border-border disabled:opacity-40"
+                          >
+                            <ArrowDown className="size-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <div className="mt-3 grid gap-3">
                       {list.map((p) => (
@@ -451,7 +531,7 @@ function StorePage() {
                             </p>
                           </div>
                           <span className="soft-press shrink-0 rounded-full bg-primary px-4 py-2 text-sm font-bold text-primary-foreground">
-                            {p.options.length ? t("customise") : t("add_to_order")}
+                            {t("add_to_order")}
                           </span>
                         </button>
                       ))}
@@ -464,7 +544,7 @@ function StorePage() {
         )}
 
         {/* Widget 2 — Order detail */}
-        <section className="cozy-card p-5">
+        <section ref={detailSectionRef} className="cozy-card p-5">
           <div className="flex items-center justify-between gap-3">
             <h2 className="font-display text-lg font-bold">{t("order_detail")}</h2>
             {!!liveOrder && (
@@ -480,6 +560,24 @@ function StorePage() {
 
           {liveOrder && liveOrder.status !== "cart" && !addingMore ? (
             <div className="mt-4 space-y-4">
+              {liveOrder.edited_at && seenEditedAt !== liveOrder.edited_at && (
+                <div className="flex items-start gap-3 rounded-2xl border border-primary/30 bg-secondary px-4 py-3 text-secondary-foreground">
+                  <Bell className="mt-0.5 size-4 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold">{t("order_updated_notice")}</p>
+                    <p className="text-xs text-secondary-foreground/80">
+                      {liveOrder.edited_note || t("order_updated_hint")}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSeenEditedAt(liveOrder.edited_at ?? null)}
+                    className="soft-press shrink-0 rounded-full border border-border bg-card px-3 py-1 text-xs font-semibold"
+                  >
+                    {t("dismiss")}
+                  </button>
+                </div>
+              )}
               <div>
                 <p className="text-xs font-semibold uppercase text-muted-foreground">
                   {t("pickup_number")}
@@ -573,14 +671,16 @@ function StorePage() {
                   <button
                     type="button"
                     onClick={() => {
-                      // A closed ticket is finished for good; a fresh one gets
-                      // its own guest token and its own QR.
+                      // A closed ticket is finished for good; sending the
+                      // customer back to the landing page (instead of
+                      // restarting in-place) means a fresh visit gets its own
+                      // guest token and its own QR, never glued to the old one.
                       localStorage.removeItem(storageKey);
                       localStorage.removeItem(cartKey);
                       setGuestToken(null);
                       setLines([]);
                       setAddingMore(false);
-                      qc.invalidateQueries({ queryKey: ["guest-order"] });
+                      navigate({ to: "/order" });
                     }}
                     className="soft-press w-full rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-lift"
                   >

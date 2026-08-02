@@ -78,7 +78,8 @@ export async function getMenuImpl(data: { slug: string }) {
 
   const byId = new Map(withPhotos.map((p) => [p.id, p]));
   const menu = withPhotos.map((p) => {
-    const total = p.stock_total === null || p.stock_total === undefined ? null : Number(p.stock_total);
+    const total =
+      p.stock_total === null || p.stock_total === undefined ? null : Number(p.stock_total);
     const remaining = total === null ? null : Math.max(0, total - Number(p.stock_sold ?? 0));
     const combo_parts = (comboRows ?? [])
       .filter((c) => c.combo_id === p.id)
@@ -103,7 +104,6 @@ export async function getMenuImpl(data: { slug: string }) {
   return { store, products: menu };
 }
 
-
 function publicOrderShape(order: {
   id: string;
   order_no: number | null;
@@ -120,6 +120,8 @@ function publicOrderShape(order: {
   created_at: string;
   approved_at: string | null;
   ready_at?: string | null;
+  edited_at?: string | null;
+  edited_note?: string | null;
   items?: Array<{
     id: string;
     name_snapshot: string;
@@ -145,6 +147,8 @@ function publicOrderShape(order: {
     created_at: order.created_at,
     approved_at: order.approved_at,
     ready_at: order.ready_at ?? null,
+    edited_at: (order as { edited_at?: string | null }).edited_at ?? null,
+    edited_note: (order as { edited_note?: string | null }).edited_note ?? null,
     items: (order.items ?? []).map((i) => ({
       id: i.id,
       name: i.name_snapshot,
@@ -333,7 +337,7 @@ export async function getGuestOrderImpl(data: { guestToken: string }) {
 
   const { data: aheadOrders } = await supabaseAdmin
     .from("orders")
-    .select("id, items:order_items(qty)")
+    .select("id, status, items:order_items(qty, product_id)")
     .eq("store_id", order.store_id)
     .in("status", ["approved", "preparing", "kitchen_done"])
     .lt("created_at", order.created_at);
@@ -342,11 +346,51 @@ export async function getGuestOrderImpl(data: { guestToken: string }) {
   // avg_prep_minutes is the owner's "minutes per cup" figure and stays private.
   // Customers only see the resulting approximation for the cups ahead of them.
   const perUnit = Number(store?.avg_prep_minutes ?? 8);
-  const cupsAhead = (aheadOrders ?? []).reduce(
-    (sum, o) => sum + ((o.items ?? []) as Array<{ qty: number }>).reduce((a, i) => a + i.qty, 0),
+
+  type AheadRow = { status: string; items: Array<{ qty: number; product_id: string }> };
+  type MyItem = { qty: number; product_id: string };
+
+  const myItems = (order.items ?? []) as MyItem[];
+  const aheadRows = (aheadOrders ?? []) as unknown as AheadRow[];
+
+  // Per-product prep minutes, falling back to the store average when unset.
+  const productIds = Array.from(
+    new Set([
+      ...myItems.map((i) => i.product_id),
+      ...aheadRows.flatMap((o) => o.items.map((i) => i.product_id)),
+    ]),
+  ).filter(Boolean);
+  const prepByProduct = new Map<string, number>();
+  if (productIds.length) {
+    const { data: prods } = await supabaseAdmin
+      .from("products")
+      .select("id, prep_minutes")
+      .in("id", productIds);
+    for (const p of (prods ?? []) as unknown as Array<{
+      id: string;
+      prep_minutes: number | null;
+    }>) {
+      prepByProduct.set(p.id, Number(p.prep_minutes ?? perUnit));
+    }
+  }
+  const minutesFor = (i: { qty: number; product_id: string }) =>
+    (prepByProduct.get(i.product_id) ?? perUnit) * i.qty;
+
+  const cupsAhead = aheadRows.reduce((sum, o) => sum + o.items.reduce((a, i) => a + i.qty, 0), 0);
+  const myCups = myItems.reduce((a, i) => a + i.qty, 0);
+
+  // An order already "preparing"/"kitchen_done" is closer to done than one
+  // still merely "approved", so it counts for less of a full prep cycle.
+  const aheadWeight = (status: string) =>
+    status === "preparing" || status === "kitchen_done" ? 0.4 : 1;
+
+  const aheadMinutes = aheadRows.reduce(
+    (sum, o) => sum + o.items.reduce((a, i) => a + minutesFor(i), 0) * aheadWeight(o.status),
     0,
   );
-  const myCups = ((order.items ?? []) as Array<{ qty: number }>).reduce((a, i) => a + i.qty, 0);
+  const mineMinutes = myItems.reduce((a, i) => a + minutesFor(i), 0) || perUnit;
+
+  const estimateMinutes = Math.min(180, Math.max(1, Math.round(aheadMinutes + mineMinutes)));
 
   return {
     gone: false as const,
@@ -354,7 +398,11 @@ export async function getGuestOrderImpl(data: { guestToken: string }) {
     store: store ? { name: store.name, slug: store.slug, currency: store.currency } : null,
     queueAhead: ahead,
     cupsAhead,
-    estimateMinutes: Math.max(1, Math.round((cupsAhead + Math.max(1, myCups)) * perUnit)),
+    estimateMinutes,
+    estimateBasis: {
+      mine: Math.round(mineMinutes),
+      ahead: Math.round(aheadMinutes),
+    },
   };
 }
 

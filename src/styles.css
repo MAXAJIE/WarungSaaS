@@ -142,10 +142,7 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
-    background-image: radial-gradient(
-        oklch(0.6 0.153 40 / 0.05) 1px,
-        transparent 1px
-      );
+    background-image: radial-gradient(oklch(0.6 0.153 40 / 0.05) 1px, transparent 1px);
     background-size: 22px 22px;
   }
 

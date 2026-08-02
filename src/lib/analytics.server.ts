@@ -39,7 +39,10 @@ export async function analyticsImpl(ctx: AuthedCtx, data: { days: number }) {
     items = rows ?? [];
   }
 
-  const byDayMap = new Map<string, { day: string; revenue: number; cost: number; orders: number }>();
+  const byDayMap = new Map<
+    string,
+    { day: string; revenue: number; cost: number; orders: number }
+  >();
   for (let i = 0; i < days; i++) {
     const d = new Date(since);
     d.setDate(since.getDate() + i);
@@ -82,6 +85,9 @@ export async function analyticsImpl(ctx: AuthedCtx, data: { days: number }) {
     orders: 0,
   }));
   const todayKey = dayKey(new Date().toISOString());
+  // Per-order timestamps for today only, so the UI can bucket revenue at any
+  // granularity (15 / 30 / 60 min) without another round trip.
+  const todayOrders: Array<{ ts: string; total: number }> = [];
   for (const o of list) {
     const stampIso = o.approved_at ?? o.created_at;
     if (dayKey(stampIso) !== todayKey) continue;
@@ -89,6 +95,7 @@ export async function analyticsImpl(ctx: AuthedCtx, data: { days: number }) {
     row.revenue += Number(o.total);
     row.cost += Number(o.cost_total);
     row.orders += 1;
+    todayOrders.push({ ts: stampIso, total: Number(o.total) });
   }
 
   const revenue = list.reduce((s, o) => s + Number(o.total), 0);
@@ -107,6 +114,7 @@ export async function analyticsImpl(ctx: AuthedCtx, data: { days: number }) {
       margin: revenue ? ((revenue - cost) / revenue) * 100 : 0,
     },
     byHour: byHour.map((h) => ({ ...h, profit: h.revenue - h.cost })),
+    todayOrders,
     byDay: Array.from(byDayMap.values()).map((d) => ({
       ...d,
       profit: d.revenue - d.cost,

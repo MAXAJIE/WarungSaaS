@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ChefHat, Copy, HandPlatter, Plus, Store, Trash2, UserMinus, UserPlus } from "lucide-react";
 import { Loading, StaffShell, useStoreGuard } from "@/components/staff-shell";
 import { EmptyState } from "@/components/empty-state";
+import { ConfirmDialog } from "@/components/modal";
 import { useI18n } from "@/lib/i18n";
 import {
   createInvite,
@@ -22,6 +23,9 @@ export const Route = createFileRoute("/_authenticated/people")({
 });
 
 const ROLE_ICON = { cashier: Store, kitchen: ChefHat, pickup: HandPlatter } as const;
+// Same caps as the DB trigger (supabase/migrations/20260805000000_versatile_vouchers_role_limits.sql):
+// owners are unlimited, everyone else is seat-capped per store.
+const ROLE_LIMIT = { cashier: 1, kitchen: 5, pickup: 1 } as const;
 
 function PeoplePage() {
   const { t } = useI18n();
@@ -39,6 +43,10 @@ function PeoplePage() {
   const removeGroup = useServerFn(deleteGroup);
   const assignGroup = useServerFn(setMemberGroup);
   const [groupName, setGroupName] = useState("");
+  const [confirmRemove, setConfirmRemove] = useState<{ id: string; name: string } | null>(null);
+  const [confirmGroupDelete, setConfirmGroupDelete] = useState<{ id: string; name: string } | null>(
+    null,
+  );
 
   const data = people.data as
     | {
@@ -70,8 +78,23 @@ function PeoplePage() {
     },
     onError: (e: Error) => toast.error(e.message),
   });
+  const kickM = useMutation({
+    mutationFn: (memberId: string) => kick({ data: { memberId } }),
+    onSuccess: () => {
+      toast.success(t("removed"));
+      refresh();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const groups = data?.groups ?? [];
+  const members = data?.members ?? [];
+  const invites = data?.invites ?? [];
+
+  // Occupied seats = active members of that role + pending invites already
+  // issued for it, so the owner cannot over-invite past the DB trigger's cap.
+  const occupied = (role: keyof typeof ROLE_LIMIT) =>
+    members.filter((m) => m.role === role).length + invites.filter((i) => i.role === role).length;
 
   return (
     <StaffShell
@@ -91,17 +114,21 @@ function PeoplePage() {
         <div className="grid gap-5 lg:grid-cols-2">
           <section className="space-y-5">
             <h2 className="font-display text-xl font-bold">{t("members")}</h2>
-            {(data?.members ?? []).length === 0 && (
+            {members.length === 0 && (
               <EmptyState title={t("empty_members_title")} hint={t("empty_members_hint")} />
             )}
             {(["cashier", "kitchen", "pickup"] as const).map((role) => {
-              const list = (data?.members ?? []).filter((m) => m.role === role);
+              const list = members.filter((m) => m.role === role);
               if (!list.length) return null;
               const Icon = ROLE_ICON[role];
+              const remaining = Math.max(0, ROLE_LIMIT[role] - occupied(role));
               return (
                 <div key={role} className="space-y-2">
                   <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-primary">
                     <Icon className="size-4" /> {t(`role_${role}`)} · {list.length}
+                    <span className="ml-auto font-semibold normal-case text-muted-foreground">
+                      {t("seats_left", { n: remaining })}
+                    </span>
                   </p>
                   {list.map((m) => (
                     <div key={m.id} className="cozy-card flex flex-wrap items-center gap-3 p-4">
@@ -114,35 +141,32 @@ function PeoplePage() {
                           {m.user_id === data?.ownerId ? t("i_am_owner") : t(`role_${m.role}`)}
                         </p>
                       </div>
-                      <select
-                        value={m.group_id ?? ""}
-                        onChange={(e) =>
-                          assignGroup({
-                            data: { memberId: m.id, group_id: e.target.value || null },
-                          })
-                            .then(refresh)
-                            .catch((err: Error) => toast.error(err.message))
-                        }
-                        aria-label={t("assign_group")}
-                        className="rounded-2xl border border-border bg-card px-3 py-2 text-xs font-semibold"
-                      >
-                        <option value="">{t("no_group")}</option>
-                        {groups.map((g) => (
-                          <option key={g.id} value={g.id}>
-                            {g.name}
-                          </option>
-                        ))}
-                      </select>
+                      {/* Only the kitchen role is split into groups — cashier and
+                          pickup are single-seat roles with nothing to route. */}
+                      {role === "kitchen" && (
+                        <select
+                          value={m.group_id ?? ""}
+                          onChange={(e) =>
+                            assignGroup({
+                              data: { memberId: m.id, group_id: e.target.value || null },
+                            })
+                              .then(refresh)
+                              .catch((err: Error) => toast.error(err.message))
+                          }
+                          aria-label={t("assign_group")}
+                          className="rounded-2xl border border-border bg-card px-3 py-2 text-xs font-semibold"
+                        >
+                          <option value="">{t("no_group")}</option>
+                          {groups.map((g) => (
+                            <option key={g.id} value={g.id}>
+                              {g.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                       {m.user_id !== data?.ownerId && (
                         <button
-                          onClick={() =>
-                            kick({ data: { memberId: m.id } })
-                              .then(() => {
-                                toast.success(t("removed"));
-                                refresh();
-                              })
-                              .catch((e: Error) => toast.error(e.message))
-                          }
+                          onClick={() => setConfirmRemove({ id: m.id, name: m.display_name || "" })}
                           className="soft-press inline-flex items-center gap-1 rounded-2xl bg-destructive/10 px-3 py-2 text-xs font-bold text-destructive"
                         >
                           <UserMinus className="size-4" /> {t("remove_person")}
@@ -178,14 +202,7 @@ function PeoplePage() {
                   >
                     {g.name}
                     <button
-                      onClick={() =>
-                        removeGroup({ data: { id: g.id } })
-                          .then(() => {
-                            refresh();
-                            qc.invalidateQueries({ queryKey: ["groups"] });
-                          })
-                          .catch((e: Error) => toast.error(e.message))
-                      }
+                      onClick={() => setConfirmGroupDelete({ id: g.id, name: g.name })}
                       className="text-destructive"
                       aria-label={t("delete")}
                     >
@@ -203,22 +220,30 @@ function PeoplePage() {
           <section>
             <h2 className="mb-3 font-display text-xl font-bold">{t("invite_staff")}</h2>
             <div className="flex flex-wrap gap-2">
-              {(["cashier", "kitchen", "pickup"] as const).map((r) => (
-                <button
-                  key={r}
-                  onClick={() => inviteM.mutate(r)}
-                  className="soft-press inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-bold text-primary-foreground"
-                >
-                  <UserPlus className="size-4" /> {t(`role_${r}`)}
-                </button>
-              ))}
+              {(["cashier", "kitchen", "pickup"] as const).map((r) => {
+                const full = occupied(r) >= ROLE_LIMIT[r];
+                return (
+                  <button
+                    key={r}
+                    disabled={full || inviteM.isPending}
+                    title={full ? t("role_full") : undefined}
+                    onClick={() => inviteM.mutate(r)}
+                    className="soft-press inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-bold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <UserPlus className="size-4" /> {t(`role_${r}`)}
+                    <span className="text-xs font-semibold opacity-80">
+                      ({t("seats_left", { n: Math.max(0, ROLE_LIMIT[r] - occupied(r)) })})
+                    </span>
+                  </button>
+                );
+              })}
             </div>
 
             <h3 className="mb-2 mt-5 text-sm font-semibold text-muted-foreground">
               {t("pending_invites")}
             </h3>
             <div className="space-y-2">
-              {(data?.invites ?? []).map((i) => (
+              {invites.map((i) => (
                 <div key={i.id} className="cozy-card flex items-center gap-3 p-4">
                   <div className="min-w-0 flex-1">
                     <p className="font-display text-lg font-bold tracking-wider">{i.code}</p>
@@ -248,13 +273,40 @@ function PeoplePage() {
                   </button>
                 </div>
               ))}
-              {(data?.invites ?? []).length === 0 && (
+              {invites.length === 0 && (
                 <EmptyState title={t("empty_invites_title")} hint={t("empty_invites_hint")} />
               )}
             </div>
           </section>
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!confirmRemove}
+        onClose={() => setConfirmRemove(null)}
+        onConfirm={() => confirmRemove && kickM.mutate(confirmRemove.id)}
+        title={t("remove_person_confirm_title")}
+        message={`${t("remove_person_confirm_msg")} ${confirmRemove?.name ?? ""}`}
+        confirmLabel={t("remove_person")}
+        destructive
+      />
+      <ConfirmDialog
+        open={!!confirmGroupDelete}
+        onClose={() => setConfirmGroupDelete(null)}
+        onConfirm={() =>
+          confirmGroupDelete &&
+          removeGroup({ data: { id: confirmGroupDelete.id } })
+            .then(() => {
+              refresh();
+              qc.invalidateQueries({ queryKey: ["groups"] });
+            })
+            .catch((e: Error) => toast.error(e.message))
+        }
+        title={t("delete")}
+        message={`${t("delete_confirm")} ${confirmGroupDelete?.name ?? ""}`}
+        confirmLabel={t("delete")}
+        destructive
+      />
     </StaffShell>
   );
 }

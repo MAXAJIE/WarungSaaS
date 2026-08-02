@@ -59,9 +59,7 @@ export function LanguageSwitcher({ compact = false }: { compact?: boolean }) {
                 setOpen(false);
               }}
               className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm font-semibold transition-colors ${
-                lang === l.code
-                  ? "bg-primary/10 text-primary"
-                  : "text-foreground hover:bg-muted"
+                lang === l.code ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"
               }`}
             >
               {l.label}

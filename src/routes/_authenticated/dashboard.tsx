@@ -3,35 +3,28 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import {
-  Ban,
-  Check,
-  ChevronDown,
-  Minus,
-  Plus,
-  QrCode,
-  RefreshCw,
-  Soup,
-  Store,
-  Timer,
-  UtensilsCrossed,
-} from "lucide-react";
+import { Ban, Check, ChevronDown, QrCode, RefreshCw, Soup, Store, Timer, X } from "lucide-react";
 import { Loading, StaffShell, useMe, type StoreRole } from "@/components/staff-shell";
 import { EmptyState } from "@/components/empty-state";
 import { OrderProgress } from "@/components/order-progress";
-import { QrScannerBox, parsePromoCode } from "@/components/qr-scanner-box";
+import { QrScannerBox } from "@/components/qr-scanner-box";
 import { ConfirmDialog, Modal } from "@/components/modal";
+import { PaymentReview, type CounterGift, type CounterOrder } from "@/components/payment-review";
+import {
+  CartSummary,
+  ProductCustomizeSheet,
+  ProductPickerGrid,
+  type CartEntry,
+  type PickerProduct,
+} from "@/components/counter-product-picker";
 import { useI18n, statusKey } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
 import {
   advanceOrder,
-  applyVoucher,
-  approveOrder,
   cancelOrder,
   createWalkInOrder,
   findOrderByCode,
   listOrders,
-  setOrderGift,
 } from "@/lib/orders.functions";
 import {
   createStore,
@@ -57,6 +50,9 @@ type OrderRow = {
   discount_total: number | string;
   total: number | string;
   created_at: string;
+  completed_at?: string | null;
+  qr_token?: string | null;
+  qr_expires_at?: string | null;
   items: Array<{
     id: string;
     product_id?: string | null;
@@ -66,7 +62,17 @@ type OrderRow = {
   }>;
   voucher?: { code: string; label: string } | null;
   gift?: { name: string } | null;
+  vouchers?: Array<{ voucher: { id: string; code: string; label: string } }>;
+  special_discount?: number | string | null;
+  special_discount_reason?: string | null;
 };
+
+/** A submitted order only really counts once its QR is still live. */
+function hasLiveQr(o: OrderRow, now: number) {
+  if (!o.qr_token) return false;
+  if (!o.qr_expires_at) return true;
+  return new Date(o.qr_expires_at).getTime() > now;
+}
 
 function DashboardPage() {
   const me = useMe();
@@ -336,25 +342,44 @@ function OrderCard({
   order,
   currency,
   children,
+  onClick,
 }: {
   order: OrderRow;
   currency: string;
   children?: React.ReactNode;
+  onClick?: () => void;
 }) {
   const { t } = useI18n();
   return (
-    <article className="cozy-card p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="font-display text-xl font-bold">
+    <article
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+      className={`cozy-card p-4 ${onClick ? "soft-press cursor-pointer text-left" : ""}`}
+    >
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4 sm:flex sm:justify-between">
+        <div className="min-w-0">
+          <p className="truncate font-display text-xl font-bold">
             {order.order_code ?? (order.order_no ? `#${order.order_no}` : t("st_submitted"))}
           </p>
-          <p className="text-sm text-muted-foreground">
+          <p className="truncate text-sm text-muted-foreground">
             {order.order_code && order.order_no ? `#${order.order_no} · ` : ""}
             {order.customer_name}
           </p>
         </div>
-        <StatusPill status={order.status} />
+        <div className="shrink-0">
+          <StatusPill status={order.status} />
+        </div>
       </div>
 
       <div className="mt-3">
@@ -432,22 +457,157 @@ function ActionButton({
   );
 }
 
+/**
+ * Read-only receipt for a closed ticket: every line, every voucher, the event
+ * discount and its reason, the gift, and the timestamps. No approve/amend
+ * actions ever appear here — Done tickets are history, not a workflow.
+ */
+function OrderDetailModal({
+  order,
+  currency,
+  onClose,
+}: {
+  order: OrderRow | null;
+  currency: string;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  if (!order) return null;
+  const vouchers = order.vouchers?.map((v) => v.voucher) ?? [];
+  return (
+    <Modal
+      open={!!order}
+      onClose={onClose}
+      title={order.order_code ?? (order.order_no ? `#${order.order_no}` : t("order_detail"))}
+      subtitle={`${order.order_no ? `#${order.order_no} · ` : ""}${order.customer_name}`}
+      size="md"
+    >
+      <div className="space-y-4">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 sm:flex sm:justify-between">
+          <p className="min-w-0 truncate text-sm text-muted-foreground">{t("status")}</p>
+          <div className="shrink-0">
+            <StatusPill status={order.status} />
+          </div>
+        </div>
+
+        <div>
+          <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+            {t("ticket_cart")}
+          </p>
+          <ul className="space-y-1 text-sm">
+            {order.items.map((i) => (
+              <li key={i.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
+                <span className="min-w-0 truncate">
+                  <span className="font-semibold">{i.qty}×</span> {i.name_snapshot}
+                </span>
+                <span className="shrink-0 text-muted-foreground">
+                  {formatMoney(i.unit_price, currency)} ={" "}
+                  {formatMoney(Number(i.unit_price) * i.qty, currency)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {vouchers.length > 0 && (
+          <div>
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+              {t("vouchers")}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {vouchers.map((v) => (
+                <span
+                  key={v.id}
+                  className="rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold"
+                >
+                  {v.code}
+                  {v.label ? ` · ${v.label}` : ""}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-0.5 border-t border-border pt-2 text-sm">
+          <div className="flex justify-between text-muted-foreground">
+            <span>{t("subtotal")}</span>
+            <span>{formatMoney(order.subtotal, currency)}</span>
+          </div>
+          {Number(order.special_discount ?? 0) > 0 && (
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 text-muted-foreground">
+              <span className="min-w-0 truncate">
+                {t("special_discount")}
+                {order.special_discount_reason ? ` · ${order.special_discount_reason}` : ""}
+              </span>
+              <span className="shrink-0">
+                -{formatMoney(order.special_discount ?? 0, currency)}
+              </span>
+            </div>
+          )}
+          {Number(order.discount_total) > 0 && (
+            <div className="flex justify-between text-muted-foreground">
+              <span>
+                {t("discount")}
+                {order.voucher ? ` · ${order.voucher.code}` : ""}
+              </span>
+              <span>-{formatMoney(order.discount_total, currency)}</span>
+            </div>
+          )}
+          {order.gift && (
+            <div className="flex justify-between text-muted-foreground">
+              <span>{t("gifts")}</span>
+              <span>{order.gift.name}</span>
+            </div>
+          )}
+          <div className="flex justify-between font-display text-lg font-bold">
+            <span>{t("total")}</span>
+            <span>{formatMoney(order.total, currency)}</span>
+          </div>
+        </div>
+
+        <div className="space-y-0.5 border-t border-border pt-2 text-xs text-muted-foreground">
+          <p>
+            {t("order_created")}: {new Date(order.created_at).toLocaleString()}
+          </p>
+          {order.completed_at && (
+            <p>
+              {t("order_closed")}: {new Date(order.completed_at).toLocaleString()}
+            </p>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 /* ------------------------- cashier ------------------------- */
 
-function CashierBoard({ roles }: { roles: StoreRole[] }) {
+function CashierBoard({ roles: _roles }: { roles: StoreRole[] }) {
   const { t } = useI18n();
-  // The counter takes money. Cooking and handing over belong to the kitchen
-  // and pickup crews, so a plain cashier never sees those buttons.
-  const canCook = roles.includes("owner") || roles.includes("kitchen");
-  const canHandOver = roles.includes("owner") || roles.includes("pickup");
   const [showAllDone, setShowAllDone] = useState(false);
   const qc = useQueryClient();
   const orders = useOrders();
   const [tab, setTab] = useState<"live" | "scan" | "new">("live");
+  /** Ticks every 30s so a QR that just expired stops being counted without a refetch. */
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const [detail, setDetail] = useState<OrderRow | null>(null);
 
-  const advance = useServerFn(advanceOrder);
-  const approve = useServerFn(approveOrder);
   const cancel = useServerFn(cancelOrder);
+  const find = useServerFn(findOrderByCode);
+
+  // Menu and promos are loaded once for the whole board: the walk-in grid, the
+  // payment popup's "add missing items" sheet and the gift chips all read them.
+  const productsQ = useQuery({
+    queryKey: ["products"],
+    queryFn: useServerFn(listProducts) as never,
+  });
+  const promosQ = useQuery({ queryKey: ["promos"], queryFn: useServerFn(listPromos) as never });
+  const products = ((productsQ.data as PickerProduct[] | undefined) ?? []).filter(Boolean);
+  const gifts = (promosQ.data as { gifts?: CounterGift[] } | undefined)?.gifts ?? [];
 
   const run = useMutation({
     mutationFn: async (job: () => Promise<unknown>) => job(),
@@ -457,35 +617,59 @@ function CashierBoard({ roles }: { roles: StoreRole[] }) {
 
   const currency = orders.data?.store.currency ?? "MYR";
   const list = (orders.data?.orders ?? []) as unknown as OrderRow[];
-  // There is no separate "awaiting payment" queue any more: an unpaid ticket is
-  // simply the first thing in the live list, with the approve button on it.
+  /**
+   * Unpaid tickets never sit on the counter board: they live on the guest's
+   * phone until the counter scans their QR. "In progress" is therefore paid
+   * work only, and the single action left on it is cancelling.
+   */
   const active = list.filter((o) =>
-    ["submitted", "approved", "preparing", "kitchen_done", "received"].includes(o.status),
+    ["approved", "preparing", "kitchen_done", "received"].includes(o.status),
   );
-  const done = list.filter((o) => ["completed", "cancelled"].includes(o.status));
+  // A submitted order is only a real ticket to chase while its QR is still
+  // live; once it expires or gets invalidated it self-heals off this count.
+  const awaiting = list.filter((o) => o.status === "submitted" && hasLiveQr(o, now));
+  const done = [...list.filter((o) => ["completed", "cancelled"].includes(o.status))].sort(
+    (a, b) =>
+      new Date(b.completed_at ?? b.created_at).getTime() -
+      new Date(a.completed_at ?? a.created_at).getTime(),
+  );
   /** Which order a confirmation dialog is currently asking about. */
-  const [confirm, setConfirm] = useState<{ kind: "cancel" | "handover"; order: OrderRow } | null>(
-    null,
-  );
+  const [confirm, setConfirm] = useState<OrderRow | null>(null);
+  /** The ticket the payment popup is reviewing, from a scan or a fresh walk-in. */
+  const [review, setReview] = useState<CounterOrder | null>(null);
 
   return (
     <div className="space-y-5">
-      <div className="flex gap-2">
+      <div className="grid grid-cols-3 gap-2">
         {(["live", "scan", "new"] as const).map((k) => (
           <button
             key={k}
             onClick={() => setTab(k)}
-            className={`soft-press flex-1 rounded-2xl px-3 py-2.5 text-sm font-bold ${
+            className={`soft-press truncate rounded-2xl px-3 py-2.5 text-sm font-bold ${
               tab === k ? "bg-primary text-primary-foreground" : "border border-border bg-card"
             }`}
           >
-            {k === "live" ? t("nav_orders") : k === "scan" ? t("nav_scan") : t("new_order")}
+            {k === "live" ? t("nav_orders") : k === "scan" ? t("nav_scan") : t("walkin_tab")}
           </button>
         ))}
       </div>
 
-      {tab === "scan" && <ScanPanel />}
-      {tab === "new" && <WalkInPanel />}
+      {tab === "scan" && (
+        <div className="mx-auto max-w-md space-y-3">
+          <QrScannerBox
+            onScan={(code) =>
+              find({ data: { code } })
+                .then((o) => setReview(o as unknown as CounterOrder))
+                .catch(() => toast.error(t("scan_expired")))
+            }
+          />
+          <p className="text-center text-xs text-muted-foreground">{t("awaiting_hint")}</p>
+        </div>
+      )}
+
+      {tab === "new" && (
+        <WalkInPanel products={products} currency={currency} onCreated={setReview} />
+      )}
 
       {tab === "live" && (
         <>
@@ -496,53 +680,38 @@ function CashierBoard({ roles }: { roles: StoreRole[] }) {
           >
             {active.map((o) => (
               <OrderCard key={o.id} order={o} currency={currency}>
-                {o.status === "submitted" && (
-                  <ActionButton
-                    onClick={() => run.mutate(() => approve({ data: { orderId: o.id } }))}
-                  >
-                    <Check className="size-4" /> {t("approve_payment")}
-                  </ActionButton>
-                )}
-                {canCook && o.status === "approved" && (
-                  <ActionButton
-                    tone="muted"
-                    onClick={() =>
-                      run.mutate(() => advance({ data: { orderId: o.id, action: "start" } }))
-                    }
-                  >
-                    <Soup className="size-4" /> {t("start_cooking")}
-                  </ActionButton>
-                )}
-                {canCook && ["approved", "preparing"].includes(o.status) && (
-                  <ActionButton
-                    tone="muted"
-                    onClick={() =>
-                      run.mutate(() => advance({ data: { orderId: o.id, action: "kitchen_done" } }))
-                    }
-                  >
-                    <Check className="size-4" /> {t("mark_done")}
-                  </ActionButton>
-                )}
-                {canHandOver && ["kitchen_done", "received"].includes(o.status) && (
-                  <ActionButton onClick={() => setConfirm({ kind: "handover", order: o })}>
-                    <Check className="size-4" /> {t("hand_over")}
-                  </ActionButton>
-                )}
-                <ActionButton
-                  tone="danger"
-                  onClick={() => setConfirm({ kind: "cancel", order: o })}
-                >
+                <ActionButton tone="danger" onClick={() => setConfirm(o)}>
                   <Ban className="size-4" /> {t("cancel")}
                 </ActionButton>
               </OrderCard>
             ))}
           </Section>
 
+          {/* Unpaid tickets are only counted here — no detail, no approve — so a
+              cashier cannot take money without scanning the guest's QR. */}
+          {awaiting.length > 0 && (
+            <div className="cozy-card flex items-center justify-between gap-3 p-4">
+              <div>
+                <p className="font-display text-base font-bold">
+                  {t("awaiting_payment")} · {awaiting.length}
+                </p>
+                <p className="text-xs text-muted-foreground">{t("awaiting_hint")}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTab("scan")}
+                className="soft-press inline-flex items-center gap-2 rounded-2xl bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground"
+              >
+                <QrCode className="size-4" /> {t("nav_scan")}
+              </button>
+            </div>
+          )}
+
           <Section title={`${t("orders_done")} (${done.length})`} empty={t("empty_done_orders")}>
             {/* The board stays readable: only the last three closed tickets,
                 with the rest one click away. */}
             {(showAllDone ? done : done.slice(0, 3)).map((o) => (
-              <OrderCard key={o.id} order={o} currency={currency} />
+              <OrderCard key={o.id} order={o} currency={currency} onClick={() => setDetail(o)} />
             ))}
           </Section>
           {done.length > 3 && (
@@ -560,27 +729,32 @@ function CashierBoard({ roles }: { roles: StoreRole[] }) {
         </>
       )}
 
-      {/* Cancelling and handing over are both irreversible, so neither happens
-          on a single stray tap. */}
+      <OrderDetailModal order={detail} currency={currency} onClose={() => setDetail(null)} />
+
+      <PaymentReview
+        open={!!review}
+        order={review}
+        products={products}
+        gifts={gifts}
+        currency={currency}
+        onClose={() => setReview(null)}
+        onApproved={() => setTab("live")}
+      />
+
+      {/* Cancelling is irreversible, so it never happens on a single stray tap. */}
       <ConfirmDialog
         open={!!confirm}
         onClose={() => setConfirm(null)}
-        title={confirm?.kind === "cancel" ? t("confirm_cancel_title") : t("confirm_pickup_title")}
-        message={`${
-          confirm?.kind === "cancel" ? t("confirm_cancel_body") : t("confirm_pickup_body")
-        } ${confirm ? (confirm.order.order_code ?? `#${confirm.order.order_no ?? ""}`) : ""}`.trim()}
-        confirmLabel={
-          confirm?.kind === "cancel" ? t("confirm_cancel_yes") : t("confirm_pickup_yes")
-        }
-        destructive={confirm?.kind === "cancel"}
+        title={t("confirm_cancel_title")}
+        message={`${t("confirm_cancel_body")} ${
+          confirm ? (confirm.order_code ?? `#${confirm.order_no ?? ""}`) : ""
+        }`.trim()}
+        confirmLabel={t("confirm_cancel_yes")}
+        destructive
         onConfirm={() => {
           if (!confirm) return;
-          const { kind, order } = confirm;
-          run.mutate(() =>
-            kind === "cancel"
-              ? cancel({ data: { orderId: order.id } })
-              : advance({ data: { orderId: order.id, action: "complete" } }),
-          );
+          const orderId = confirm.id;
+          run.mutate(() => cancel({ data: { orderId } }));
         }}
       />
     </div>
@@ -613,255 +787,76 @@ function Section({
   );
 }
 
-function ScanPanel() {
+/**
+ * Walk-in ticket: square product widgets, a customise sheet per dish (including
+ * every part of a combo), then Create order — which hands straight over to the
+ * same payment popup a scanned customer order uses.
+ */
+function WalkInPanel({
+  products,
+  currency,
+  onCreated,
+}: {
+  products: PickerProduct[];
+  currency: string;
+  onCreated: (order: CounterOrder) => void;
+}) {
   const { t } = useI18n();
   const qc = useQueryClient();
-  const find = useServerFn(findOrderByCode);
-  const applyV = useServerFn(applyVoucher);
-  const setGift = useServerFn(setOrderGift);
-  const approve = useServerFn(approveOrder);
-  const promos = useQuery({ queryKey: ["promos"], queryFn: useServerFn(listPromos) as never });
-
-  const [order, setOrder] = useState<OrderRow | null>(null);
-  const [voucherCode, setVoucherCode] = useState("");
-  /** Vouchers are printed as QR codes, so the code can be scanned as well as typed. */
-  const [scanVoucher, setScanVoucher] = useState(false);
-  const currency = "MYR";
-
-  const findM = useMutation({
-    mutationFn: (code: string) => find({ data: { code } }),
-    onSuccess: (o) => setOrder(o as unknown as OrderRow),
-    onError: () => toast.error(t("scan_expired")),
-  });
-
-  const voucherM = useMutation({
-    // Takes the code as an argument so a freshly scanned QR is applied
-    // immediately instead of waiting for the input state to settle.
-    mutationFn: (code: string) => applyV({ data: { orderId: order!.id, code } }),
-    onSuccess: async (res) => {
-      if (!res.ok) {
-        toast.error(res.reason === "used" ? t("voucher_used") : t("voucher_invalid"));
-        return;
-      }
-      toast.success(t("voucher_applied"));
-      setVoucherCode("");
-      findM.mutate(order!.id ? (order as OrderRow).id : "");
-      const refreshed = await find({ data: { code: "" } }).catch(() => null);
-      if (refreshed) setOrder(refreshed as unknown as OrderRow);
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const approveM = useMutation({
-    mutationFn: () => approve({ data: { orderId: order!.id } }),
-    onSuccess: () => {
-      toast.success(t("order_approved"));
-      setOrder(null);
-      qc.invalidateQueries({ queryKey: ["orders"] });
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const gifts =
-    (
-      promos.data as
-        | { gifts?: Array<{ id: string; name: string; threshold: number; is_active: boolean }> }
-        | undefined
-    )?.gifts ?? [];
-  const eligible = order
-    ? gifts.filter((g) => g.is_active && Number(order.total) >= g.threshold)
-    : [];
-
-  if (!order) {
-    return (
-      <div className="mx-auto max-w-md">
-        <QrScannerBox onScan={(code) => findM.mutate(code)} />
-      </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto max-w-md space-y-4">
-      <OrderCard order={order} currency={currency} />
-
-      <div className="cozy-card space-y-3 p-4">
-        <div className="flex gap-2">
-          <input
-            value={voucherCode}
-            onChange={(e) => setVoucherCode(e.target.value)}
-            placeholder={t("promo_code")}
-            className="flex-1 rounded-2xl border border-border bg-card px-4 py-2.5 text-sm uppercase outline-none focus:border-primary"
-          />
-          <button
-            type="button"
-            onClick={() => setScanVoucher(true)}
-            aria-label={t("scan_voucher")}
-            title={t("scan_voucher")}
-            className="soft-press grid size-11 shrink-0 place-items-center rounded-2xl border border-border bg-card"
-          >
-            <QrCode className="size-4" />
-          </button>
-          <button
-            onClick={() => voucherM.mutate(voucherCode)}
-            disabled={!voucherCode}
-            className="soft-press rounded-2xl bg-secondary px-4 py-2.5 text-sm font-bold text-secondary-foreground disabled:opacity-60"
-          >
-            {t("apply")}
-          </button>
-        </div>
-
-        <Modal
-          open={scanVoucher}
-          onClose={() => setScanVoucher(false)}
-          title={t("scan_voucher")}
-          subtitle={t("scan_voucher_hint")}
-          size="sm"
-        >
-          <QrScannerBox
-            parse={parsePromoCode}
-            onScan={(code) => {
-              setScanVoucher(false);
-              setVoucherCode(code);
-              voucherM.mutate(code);
-            }}
-          />
-        </Modal>
-
-        {eligible.length > 0 && (
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground">{t("gift_eligible")}</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {eligible.map((g) => (
-                <button
-                  key={g.id}
-                  onClick={async () => {
-                    const updated = await setGift({
-                      data: { orderId: order.id, giftId: g.id },
-                    }).catch((e: Error) => {
-                      toast.error(e.message);
-                      return null;
-                    });
-                    if (updated) setOrder(updated as unknown as OrderRow);
-                  }}
-                  className="soft-press rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold"
-                >
-                  {g.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <ActionButton onClick={() => approveM.mutate()} disabled={approveM.isPending}>
-          <Check className="size-4" /> {t("approve_payment")}
-        </ActionButton>
-        <button
-          onClick={() => setOrder(null)}
-          className="w-full text-center text-sm text-muted-foreground underline underline-offset-4"
-        >
-          {t("back")}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function WalkInPanel() {
-  const { t } = useI18n();
-  const qc = useQueryClient();
-  const products = useQuery({
-    queryKey: ["products"],
-    queryFn: useServerFn(listProducts) as never,
-  });
   const create = useServerFn(createWalkInOrder);
-  const [cart, setCart] = useState<Record<string, number>>({});
+  const [cart, setCart] = useState<CartEntry[]>([]);
+  const [picking, setPicking] = useState<PickerProduct | null>(null);
   const [name, setName] = useState("");
 
-  const rows =
-    (products.data as
-      | Array<{
-          id: string;
-          name: string;
-          sell_price: number | string;
-          is_available: boolean;
-        }>
-      | undefined) ?? [];
-
-  const total = useMemo(
-    () => rows.reduce((s, p) => s + Number(p.sell_price) * (cart[p.id] ?? 0), 0),
-    [rows, cart],
-  );
+  const total = useMemo(() => cart.reduce((s, c) => s + c.unitPrice * c.item.qty, 0), [cart]);
 
   const createM = useMutation({
     mutationFn: () =>
       create({
         data: {
-          customer_name: name || "Walk-in",
-          items: Object.entries(cart)
-            .filter(([, q]) => q > 0)
-            .map(([product_id, qty]) => ({ product_id, qty })),
+          customer_name: name.trim() || "Walk-in",
+          items: cart.map((c) => c.item),
         },
       }),
-    onSuccess: () => {
-      toast.success(t("order_created"));
-      setCart({});
+    onSuccess: (order) => {
+      toast.success(t("walkin_created"));
+      setCart([]);
       setName("");
       qc.invalidateQueries({ queryKey: ["orders"] });
+      if (order) onCreated(order as unknown as CounterOrder);
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
   return (
-    <div className="mx-auto max-w-md space-y-3">
-      <input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder={t("your_name")}
-        className="w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm outline-none focus:border-primary"
-      />
-      <div className="cozy-card divide-y divide-border p-2">
-        {rows
-          .filter((p) => p.is_available)
-          .map((p) => (
-            <div key={p.id} className="flex items-center gap-3 px-2 py-2.5">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">{p.name}</p>
-                <p className="text-xs text-muted-foreground">{formatMoney(p.sell_price)}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() =>
-                    setCart((c) => ({ ...c, [p.id]: Math.max(0, (c[p.id] ?? 0) - 1) }))
-                  }
-                  className="soft-press grid size-8 place-items-center rounded-full border border-border"
-                  aria-label="-"
-                >
-                  <Minus className="size-3.5" />
-                </button>
-                <span className="w-5 text-center text-sm font-bold">{cart[p.id] ?? 0}</span>
-                <button
-                  onClick={() => setCart((c) => ({ ...c, [p.id]: (c[p.id] ?? 0) + 1 }))}
-                  className="soft-press grid size-8 place-items-center rounded-full bg-primary text-primary-foreground"
-                  aria-label="+"
-                >
-                  <Plus className="size-3.5" />
-                </button>
-              </div>
-            </div>
-          ))}
-        {rows.length === 0 && (
-          <EmptyState
-            title={t("empty_products_title")}
-            hint={t("empty_products_hint")}
-            actionLabel={t("empty_products_cta")}
-            to="/products"
-            icon={<UtensilsCrossed className="size-5" />}
-          />
-        )}
+    <div className="space-y-3">
+      <p className="text-center text-xs text-muted-foreground">{t("walkin_grid_hint")}</p>
+      <ProductPickerGrid products={products} onPick={setPicking} />
+
+      <div className="mx-auto max-w-md space-y-3">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t("walkin_customer_name")}
+          className="w-full rounded-2xl border border-border bg-card px-4 py-3 text-sm outline-none focus:border-primary"
+        />
+        <CartSummary
+          cart={cart}
+          currency={currency}
+          onRemove={(key) => setCart((c) => c.filter((e) => e.key !== key))}
+        />
+        <ActionButton onClick={() => createM.mutate()} disabled={!cart.length || createM.isPending}>
+          <Store className="size-4" /> {t("create_order_cta")} · {formatMoney(total, currency)}
+        </ActionButton>
       </div>
-      <ActionButton onClick={() => createM.mutate()} disabled={total <= 0 || createM.isPending}>
-        <Store className="size-4" /> {t("new_order")} · {formatMoney(total)}
-      </ActionButton>
+
+      <ProductCustomizeSheet
+        open={!!picking}
+        product={picking}
+        products={products}
+        onClose={() => setPicking(null)}
+        onConfirm={(entry) => setCart((c) => [...c, entry])}
+      />
     </div>
   );
 }

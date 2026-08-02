@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   getMembership,
   logAction,
+  looseDb,
   randomCode,
   randomToken,
   requireCashier,
@@ -14,6 +15,7 @@ import {
   type AuthedCtx,
   type StoreRole,
 } from "./warung.server";
+import { generateVoucherCode, type VoucherReward } from "./vouchers";
 import { notifyStore, notifyUser } from "./notifications.server";
 
 export type StaffRole = StoreRole;
@@ -73,9 +75,7 @@ export async function updateProfileImpl(
   ctx: AuthedCtx,
   data: { display_name?: string; preferred_lang?: string },
 ) {
-  await ctx.supabase
-    .from("profiles")
-    .upsert({ id: ctx.userId, ...data }, { onConflict: "id" });
+  await ctx.supabase.from("profiles").upsert({ id: ctx.userId, ...data }, { onConflict: "id" });
   if (data.display_name) {
     await supabaseAdmin
       .from("store_members")
@@ -130,7 +130,6 @@ export async function createStoreImpl(
     throw new Error("That store link is already taken. Try another one.");
   }
 
-
   // Owner id is derived from the verified bearer token, never from request data.
   // The insert runs through the service-role client because the caller has no
   // store membership yet, so the members-only SELECT policy on `stores` would
@@ -183,6 +182,10 @@ export async function updateStoreImpl(
     order_code_template?: string;
     /** Spend that unlocks the counter's event discount. 0 disables it. */
     event_spend?: number;
+    /** Storage paths (product-photos bucket). Gift thresholds/event spend are
+     * configured per-gift/per-promo elsewhere and are not edited here. */
+    logo_path?: string | null;
+    cover_path?: string | null;
   },
 ) {
   const { store, member } = await requireOwner(ctx);
@@ -270,9 +273,7 @@ export async function listPeopleImpl(ctx: AuthedCtx) {
   const withRoles = (members ?? []).map((m) => ({
     ...m,
     roles: sortRoles([
-      ...((extraRoles ?? [])
-        .filter((r) => r.member_id === m.id)
-        .map((r) => r.role) as StoreRole[]),
+      ...((extraRoles ?? []).filter((r) => r.member_id === m.id).map((r) => r.role) as StoreRole[]),
       m.role as StoreRole,
     ]),
   }));
@@ -351,7 +352,12 @@ export async function peekInviteImpl(_ctx: AuthedCtx, data: { code: string }) {
     .select("name,slug")
     .eq("id", invite.store_id)
     .maybeSingle();
-  return { code, role: invite.role as StaffRole, storeName: store?.name ?? "", slug: store?.slug ?? "" };
+  return {
+    code,
+    role: invite.role as StaffRole,
+    storeName: store?.name ?? "",
+    slug: store?.slug ?? "",
+  };
 }
 
 export async function joinWithInviteImpl(ctx: AuthedCtx, data: { code: string; role?: StaffRole }) {
@@ -604,7 +610,6 @@ export async function setMemberGroupImpl(
   return { ok: true };
 }
 
-
 /**
  * The owner is the only person who can hand out hats, and everyone except the
  * owner wears exactly one. Pickup duty always rides along with the owner set so
@@ -625,7 +630,8 @@ export async function setMemberRolesImpl(
 
   let roles = sortRoles(data.roles.filter((r) => ASSIGNABLE_ROLES.includes(r)));
   if (!roles.length) throw new Error("Pick at least one role.");
-  if (target.user_id === store.owner_id && !roles.includes("owner")) roles = sortRoles(["owner", ...roles]);
+  if (target.user_id === store.owner_id && !roles.includes("owner"))
+    roles = sortRoles(["owner", ...roles]);
   // Only the owner may wear several hats at once.
   if (!roles.includes("owner") && roles.length > 1)
     throw new Error("Only the owner can hold more than one role.");
@@ -777,94 +783,321 @@ export async function uploadProductPhotoImpl(
   return { path, signedUrl: await signPhoto(path) };
 }
 
+/**
+ * Stores a store logo or cover in the same public bucket as product photos,
+ * under a `<store>/branding/` prefix so it never collides with menu photos.
+ */
+export async function uploadStoreImageImpl(
+  ctx: AuthedCtx,
+  data: { base64: string; ext?: string; kind: "logo" | "cover" },
+) {
+  const { store } = await requireOwner(ctx);
+  const raw = data.base64.includes(",") ? data.base64.split(",")[1]! : data.base64;
+  const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+  if (bytes.byteLength > 5 * 1024 * 1024) throw new Error("Image must be under 5 MB.");
+  const ext = (data.ext || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+  const path = `${store.id}/branding/${data.kind}-${randomToken()}.${ext}`;
+  const { error } = await supabaseAdmin.storage
+    .from("product-photos")
+    .upload(path, bytes, { contentType: `image/${ext === "jpg" ? "jpeg" : ext}`, upsert: false });
+  if (error) throw new Error(error.message);
+  const column = data.kind === "logo" ? "logo_path" : "cover_path";
+  const { error: updateError } = await supabaseAdmin
+    .from("stores")
+    .update({ [column]: path } as never)
+    .eq("id", store.id);
+  if (updateError) throw new Error(updateError.message);
+  return { path, signedUrl: await signPhoto(path) };
+}
+
 /* ---------------- vouchers & gifts ---------------- */
 
 export async function listPromosImpl(ctx: AuthedCtx) {
   const { store } = await requireMember(ctx);
-  const [{ data: vouchers }, { data: gifts }] = await Promise.all([
-    ctx.supabase
-      .from("vouchers")
-      .select("*")
-      .eq("store_id", store.id)
-      .order("created_at", { ascending: false }),
-    ctx.supabase
-      .from("gifts")
-      .select("*")
-      .eq("store_id", store.id)
-      .order("threshold"),
-  ]);
-  return { vouchers: vouchers ?? [], gifts: gifts ?? [], store };
+  const [{ data: vouchers }, { data: gifts }, { data: templates }, { data: products }] =
+    await Promise.all([
+      ctx.supabase
+        .from("vouchers")
+        .select("*")
+        .eq("store_id", store.id)
+        .order("created_at", { ascending: false }),
+      ctx.supabase.from("gifts").select("*").eq("store_id", store.id).order("threshold"),
+      looseDb()
+        .from("voucher_templates")
+        .select("*")
+        .eq("store_id", store.id)
+        .order("created_at", { ascending: false }),
+      ctx.supabase
+        .from("products")
+        .select("id,name,sell_price,is_combo")
+        .eq("store_id", store.id)
+        .order("name"),
+    ]);
+  return {
+    vouchers: vouchers ?? [],
+    gifts: gifts ?? [],
+    templates: templates ?? [],
+    products: products ?? [],
+    store,
+  };
 }
 
-export async function upsertVoucherImpl(
-  ctx: AuthedCtx,
-  data: {
-    id?: string;
-    code: string;
-    label?: string;
-    kind: "percent" | "fixed";
-    value: number;
-    min_spend?: number;
-    is_active?: boolean;
-  },
-) {
+export type VoucherInput = {
+  id?: string;
+  code?: string;
+  label?: string;
+  /** How many codes to mint in one go. Codes are generated when > 1. */
+  quantity?: number;
+  /** Prefix for generated codes, e.g. `RAYA`. */
+  code_prefix?: string;
+  reward?: VoucherReward;
+  value: number;
+  reward_product_id?: string | null;
+  nth_item?: number;
+  buy_qty?: number;
+  get_qty?: number;
+  stackable?: boolean;
+  max_discount?: number;
+  min_spend?: number;
+  min_items?: number;
+  required_product_id?: string | null;
+  required_qty?: number;
+  usage_limit?: number;
+  terms?: string;
+  expires_at?: string | null;
+  template_id?: string | null;
+  artwork_path?: string | null;
+  is_active?: boolean;
+};
+
+/**
+ * Creates or edits a voucher. With `quantity > 1` it mints a whole batch of
+ * unique auto-generated codes that share one `batch_id`, so the owner can print
+ * a run of vouchers from a single form.
+ */
+export async function upsertVoucherImpl(ctx: AuthedCtx, data: VoucherInput) {
   const { store, member } = await requireOwner(ctx);
-  const payload = { ...data, code: data.code.trim().toUpperCase(), store_id: store.id };
-  const { data: saved, error } = data.id
-    ? await ctx.supabase
-        .from("vouchers")
-        .update(payload)
-        .eq("id", data.id)
-        .eq("store_id", store.id)
-        .select("*")
-        .single()
-    : await ctx.supabase.from("vouchers").insert(payload).select("*").single();
+  const reward: VoucherReward = data.reward ?? "order_percent";
+  const shared = {
+    store_id: store.id,
+    label: data.label ?? "",
+    // The legacy `kind` column stays in sync so older screens keep working.
+    kind: reward === "order_fixed" ? "fixed" : "percent",
+    reward,
+    value: Number(data.value) || 0,
+    reward_product_id: data.reward_product_id ?? null,
+    nth_item: Math.max(2, Number(data.nth_item ?? 2)),
+    buy_qty: Math.max(1, Number(data.buy_qty ?? 1)),
+    get_qty: Math.max(1, Number(data.get_qty ?? 1)),
+    stackable: !!data.stackable,
+    max_discount: Math.max(0, Number(data.max_discount ?? 0)),
+    min_spend: Math.max(0, Number(data.min_spend ?? 0)),
+    min_items: Math.max(0, Number(data.min_items ?? 0)),
+    required_product_id: data.required_product_id ?? null,
+    required_qty: Math.max(1, Number(data.required_qty ?? 1)),
+    usage_limit: Math.max(0, Number(data.usage_limit ?? 1)),
+    terms: (data.terms ?? "").slice(0, 500),
+    expires_at: data.expires_at ?? null,
+    template_id: data.template_id ?? null,
+    artwork_path: data.artwork_path ?? null,
+    is_active: data.is_active ?? true,
+  };
+
+  if (data.id) {
+    const { data: saved, error } = await looseDb()
+      .from("vouchers")
+      .update({ ...shared, ...(data.code ? { code: data.code.trim().toUpperCase() } : {}) })
+      .eq("id", data.id)
+      .eq("store_id", store.id)
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    await logAction({
+      storeId: store.id,
+      actorId: ctx.userId,
+      actorLabel: member.display_name,
+      action: "voucher.updated",
+      detail: { id: data.id },
+    });
+    return { vouchers: [saved] };
+  }
+
+  const quantity = Math.min(500, Math.max(1, Number(data.quantity ?? 1)));
+  const batchId = quantity > 1 ? crypto.randomUUID() : null;
+  const codes = new Set<string>();
+  if (quantity === 1 && data.code?.trim()) {
+    codes.add(data.code.trim().toUpperCase());
+  } else {
+    while (codes.size < quantity) codes.add(generateVoucherCode(data.code_prefix ?? ""));
+  }
+
+  const rows = Array.from(codes).map((code) => ({ ...shared, code, batch_id: batchId }));
+  const { data: saved, error } = await looseDb().from("vouchers").insert(rows).select("*");
   if (error) throw new Error(error.message);
   await logAction({
     storeId: store.id,
     actorId: ctx.userId,
     actorLabel: member.display_name,
-    action: data.id ? "voucher.updated" : "voucher.created",
-    detail: { code: payload.code },
+    action: "voucher.created",
+    detail: { count: rows.length, batch: batchId },
   });
-  return saved;
+  return { vouchers: saved ?? [] };
 }
 
-export async function deleteVoucherImpl(ctx: AuthedCtx, data: { id: string }) {
+export async function deleteVoucherImpl(ctx: AuthedCtx, data: { id?: string; batchId?: string }) {
   const { store } = await requireOwner(ctx);
-  await ctx.supabase.from("vouchers").delete().eq("id", data.id).eq("store_id", store.id);
+  if (data.batchId) {
+    await looseDb().from("vouchers").delete().eq("batch_id", data.batchId).eq("store_id", store.id);
+  } else if (data.id) {
+    await ctx.supabase.from("vouchers").delete().eq("id", data.id).eq("store_id", store.id);
+  }
   return { ok: true };
 }
 
-export async function upsertGiftImpl(
+/* ---------------- voucher design templates ---------------- */
+
+export type VoucherTemplateInput = {
+  id?: string;
+  name: string;
+  artwork_path?: string | null;
+  qr_x?: number;
+  qr_y?: number;
+  qr_size?: number;
+  defaults?: Record<string, unknown>;
+};
+
+export async function upsertVoucherTemplateImpl(ctx: AuthedCtx, data: VoucherTemplateInput) {
+  const { store } = await requireOwner(ctx);
+  const payload = {
+    store_id: store.id,
+    name: data.name.trim() || "Template",
+    artwork_path: data.artwork_path ?? null,
+    qr_x: clamp01(data.qr_x ?? 0.72),
+    qr_y: clamp01(data.qr_y ?? 0.62),
+    qr_size: clamp01(data.qr_size ?? 0.22),
+    defaults: data.defaults ?? {},
+  };
+  const query = data.id
+    ? looseDb()
+        .from("voucher_templates")
+        .update(payload)
+        .eq("id", data.id)
+        .eq("store_id", store.id)
+        .select("*")
+        .single()
+    : looseDb().from("voucher_templates").insert(payload).select("*").single();
+  const { data: saved, error } = await query;
+  if (error) throw new Error(error.message);
+  return saved;
+}
+
+export async function deleteVoucherTemplateImpl(ctx: AuthedCtx, data: { id: string }) {
+  const { store } = await requireOwner(ctx);
+  await looseDb().from("voucher_templates").delete().eq("id", data.id).eq("store_id", store.id);
+  return { ok: true };
+}
+
+/**
+ * Stores cropped voucher artwork. The browser sends an already-cropped PNG as a
+ * data URL, so the aspect ratio is fixed before it ever reaches storage.
+ */
+export async function uploadVoucherArtworkImpl(
   ctx: AuthedCtx,
-  data: {
-    id?: string;
-    name: string;
-    note?: string;
-    threshold: number;
-    stock?: number;
-    is_active?: boolean;
-  },
+  data: { dataUrl: string; name?: string },
 ) {
+  const { store } = await requireOwner(ctx);
+  const match = /^data:(image\/(png|jpeg|webp));base64,(.+)$/.exec(data.dataUrl);
+  if (!match) throw new Error("Unsupported image.");
+  const bytes = Uint8Array.from(atob(match[3]!), (c) => c.charCodeAt(0));
+  const ext = match[2] === "jpeg" ? "jpg" : match[2];
+  const path = `${store.id}/${Date.now()}-${(data.name ?? "voucher").replace(/[^a-z0-9]/gi, "")}.${ext}`;
+  const { error } = await supabaseAdmin.storage
+    .from("voucher-designs")
+    .upload(path, bytes, { contentType: match[1]!, upsert: true });
+  if (error) throw new Error(error.message);
+  const { data: signed } = await supabaseAdmin.storage
+    .from("voucher-designs")
+    .createSignedUrl(path, 60 * 60 * 24);
+  return { path, url: signed?.signedUrl ?? null };
+}
+
+/** Signed links for artwork so the promos page can render the designs. */
+export async function signVoucherArtworkImpl(ctx: AuthedCtx, data: { paths: string[] }) {
+  await requireMember(ctx);
+  const out: Record<string, string> = {};
+  for (const path of Array.from(new Set(data.paths.filter(Boolean)))) {
+    const { data: signed } = await supabaseAdmin.storage
+      .from("voucher-designs")
+      .createSignedUrl(path, 60 * 60 * 24);
+    if (signed?.signedUrl) out[path] = signed.signedUrl;
+  }
+  return out;
+}
+
+function clamp01(n: number) {
+  return Math.min(1, Math.max(0, Number(n) || 0));
+}
+
+/* ---------------- gifts ---------------- */
+
+export type GiftInput = {
+  id?: string;
+  /** Gifts are always an existing menu product. */
+  product_id: string;
+  item_qty?: number;
+  note?: string;
+  threshold: number;
+  stock?: number;
+  min_items?: number;
+  required_product_id?: string | null;
+  required_qty?: number;
+  terms?: string;
+  is_active?: boolean;
+};
+
+export async function upsertGiftImpl(ctx: AuthedCtx, data: GiftInput) {
   const { store, member } = await requireOwner(ctx);
-  const payload = { ...data, store_id: store.id };
-  const { data: saved, error } = data.id
-    ? await ctx.supabase
+  const { data: product } = await ctx.supabase
+    .from("products")
+    .select("id,name")
+    .eq("id", data.product_id)
+    .eq("store_id", store.id)
+    .maybeSingle();
+  if (!product) throw new Error("Pick a product from your menu.");
+
+  const payload = {
+    store_id: store.id,
+    product_id: product.id,
+    // The name snapshot keeps old tickets readable if the menu is renamed.
+    name: product.name,
+    item_qty: Math.max(1, Number(data.item_qty ?? 1)),
+    note: data.note ?? "",
+    threshold: Math.max(0, Number(data.threshold) || 0),
+    stock: Math.max(0, Number(data.stock ?? 0)),
+    min_items: Math.max(0, Number(data.min_items ?? 0)),
+    required_product_id: data.required_product_id ?? null,
+    required_qty: Math.max(1, Number(data.required_qty ?? 1)),
+    terms: (data.terms ?? "").slice(0, 500),
+    is_active: data.is_active ?? true,
+  };
+
+  const query = data.id
+    ? looseDb()
         .from("gifts")
         .update(payload)
         .eq("id", data.id)
         .eq("store_id", store.id)
         .select("*")
         .single()
-    : await ctx.supabase.from("gifts").insert(payload).select("*").single();
+    : looseDb().from("gifts").insert(payload).select("*").single();
+  const { data: saved, error } = await query;
   if (error) throw new Error(error.message);
   await logAction({
     storeId: store.id,
     actorId: ctx.userId,
     actorLabel: member.display_name,
     action: data.id ? "gift.updated" : "gift.created",
-    detail: { name: data.name },
+    detail: { name: product.name },
   });
   return saved;
 }
@@ -898,7 +1131,6 @@ export async function listLogsImpl(
   return { logs: logs ?? [], scope, canSeeEveryone: isOwner };
 }
 
-
 /* ---------------- role change requests ---------------- */
 
 /** Staff cannot change their own role; they ask, the owner decides. */
@@ -908,7 +1140,8 @@ export async function requestRoleChangeImpl(
 ) {
   const { store, member } = await requireMember(ctx);
   if (member.role === data.requested_role) throw new Error("That is already your role.");
-  if (member.user_id === store.owner_id) throw new Error("The owner already holds every permission.");
+  if (member.user_id === store.owner_id)
+    throw new Error("The owner already holds every permission.");
   const { data: pending } = await ctx.supabase
     .from("role_requests")
     .select("id")

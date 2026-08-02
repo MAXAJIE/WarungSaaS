@@ -1,21 +1,34 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Gift, Plus, Ticket, Trash2 } from "lucide-react";
+import { ChevronDown, Download, Gift, Plus, Printer, Ticket, Trash2 } from "lucide-react";
 import { ViewToolbar, useViewPrefs, viewPadClass } from "@/components/view-toolbar";
 import { Loading, StaffShell, useStoreGuard } from "@/components/staff-shell";
-import { ConfirmDialog, Modal } from "@/components/modal";
+import { ConfirmDialog } from "@/components/modal";
 import { EmptyState } from "@/components/empty-state";
 import { useI18n } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
+import { rewardSummary, type VoucherReward } from "@/lib/vouchers";
+import { downloadVoucherPng, downloadVoucherSheetPng } from "@/components/voucher-canvas";
+import {
+  VoucherForm,
+  type PromoProduct,
+  type VoucherTemplateRow,
+  type VoucherFormValue,
+} from "@/components/voucher-form";
+import { GiftForm, type GiftFormValue } from "@/components/gift-form";
 import {
   deleteGift,
   deleteVoucher,
+  deleteVoucherTemplate,
   listPromos,
+  signVoucherArtwork,
   upsertGift,
   upsertVoucher,
+  upsertVoucherTemplate,
+  uploadVoucherArtwork,
 } from "@/lib/staff.functions";
 
 export const Route = createFileRoute("/_authenticated/promos")({
@@ -26,11 +39,22 @@ type Voucher = {
   id: string;
   code: string;
   label: string | null;
-  kind: "percent" | "fixed";
+  reward: VoucherReward;
   value: number | string;
+  nth_item: number;
+  buy_qty: number;
+  get_qty: number;
   min_spend: number | string;
   is_active: boolean;
-  used_by_order: string | null;
+  used_count: number;
+  usage_limit: number;
+  batch_id: string | null;
+  artwork_path: string | null;
+  qr_x: number | string;
+  qr_y: number | string;
+  qr_size: number | string;
+  expires_at: string | null;
+  terms: string;
 };
 type GiftRow = {
   id: string;
@@ -39,7 +63,19 @@ type GiftRow = {
   threshold: number | string;
   stock: number;
   is_active: boolean;
+  product_id: string;
+  item_qty: number;
+  min_items: number;
+  required_product_id: string | null;
+  required_qty: number;
+  terms: string;
 };
+
+function batchLabel(vs: Voucher[]) {
+  if (vs.length === 1) return vs[0]!.code;
+  const codes = vs.map((v) => v.code).sort();
+  return `${codes[0]} … ${codes[codes.length - 1]} (${vs.length})`;
+}
 
 function PromosPage() {
   const { t } = useI18n();
@@ -53,43 +89,126 @@ function PromosPage() {
   });
   const saveV = useServerFn(upsertVoucher);
   const delV = useServerFn(deleteVoucher);
+  const saveTpl = useServerFn(upsertVoucherTemplate);
+  const delTpl = useServerFn(deleteVoucherTemplate);
+  const uploadArt = useServerFn(uploadVoucherArtwork);
+  const signArt = useServerFn(signVoucherArtwork);
   const saveG = useServerFn(upsertGift);
   const delG = useServerFn(deleteGift);
 
-  const [voucher, setVoucher] = useState({
-    code: "",
-    label: "",
-    kind: "percent" as "percent" | "fixed",
-    value: 10,
-    min_spend: 0,
-  });
-  const [gift, setGift] = useState({ name: "", note: "", threshold: 50, stock: 10 });
   const [openVoucher, setOpenVoucher] = useState(false);
+  const [voucherInitial, setVoucherInitial] = useState<Partial<VoucherFormValue> | null>(null);
+  const [applyTemplateId, setApplyTemplateId] = useState<string | null>(null);
   const [openGift, setOpenGift] = useState(false);
+  const [giftInitial, setGiftInitial] = useState<Partial<GiftFormValue> | null>(null);
   const [confirmV, setConfirmV] = useState<Voucher | null>(null);
+  const [confirmBatch, setConfirmBatch] = useState<{ batchId: string; label: string } | null>(null);
   const [confirmG, setConfirmG] = useState<GiftRow | null>(null);
+  const [openBatches, setOpenBatches] = useState<Set<string>>(new Set());
+  const [artworkUrls, setArtworkUrls] = useState<Record<string, string>>({});
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["promos"] });
-  const vM = useMutation({
-    mutationFn: () => saveV({ data: voucher }),
-    onSuccess: () => {
-      setVoucher({ ...voucher, code: "", label: "" });
+
+  const data = promos.data as
+    | {
+        vouchers: Voucher[];
+        gifts: GiftRow[];
+        templates: VoucherTemplateRow[];
+        products: PromoProduct[];
+      }
+    | undefined;
+
+  const paths = useMemo(() => {
+    const set2 = new Set<string>();
+    (data?.vouchers ?? []).forEach((v) => v.artwork_path && set2.add(v.artwork_path));
+    (data?.templates ?? []).forEach((tpl) => tpl.artwork_path && set2.add(tpl.artwork_path));
+    return Array.from(set2);
+  }, [data]);
+
+  useMemo(() => {
+    if (!paths.length) return;
+    const missing = paths.filter((p) => !artworkUrls[p]);
+    if (!missing.length) return;
+    signArt({ data: { paths: missing } })
+      .then((map) => setArtworkUrls((prev) => ({ ...prev, ...map })))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paths.join(",")]);
+
+  const batches = useMemo(() => {
+    const map = new Map<string, Voucher[]>();
+    for (const v of data?.vouchers ?? []) {
+      const key = v.batch_id ?? v.id;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(v);
+    }
+    return Array.from(map.entries());
+  }, [data]);
+
+  const vSaveM = useMutation({
+    mutationFn: (value: VoucherFormValue) =>
+      saveV({
+        data: {
+          ...value,
+          expires_at: value.expires_at || null,
+        },
+      }),
+    onSuccess: (res: { vouchers: Voucher[] }) => {
       setOpenVoucher(false);
       invalidate();
+      if (res?.vouchers?.length) {
+        toast.success(t("batch_minted").replace("{count}", String(res.vouchers.length)));
+        const bId = res.vouchers[0]?.batch_id ?? res.vouchers[0]?.id;
+        if (bId) setOpenBatches((prev) => new Set(prev).add(bId));
+      }
     },
     onError: (e: Error) => toast.error(e.message),
   });
-  const gM = useMutation({
-    mutationFn: () => saveG({ data: gift }),
+
+  const gSaveM = useMutation({
+    mutationFn: (value: GiftFormValue) => saveG({ data: value }),
     onSuccess: () => {
-      setGift({ ...gift, name: "", note: "" });
       setOpenGift(false);
       invalidate();
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const data = promos.data as { vouchers: Voucher[]; gifts: GiftRow[] } | undefined;
+  /**
+   * Exported PNGs must match what the owner saw in the placement preview, so the
+   * canvas size travels with the artwork: whichever saved design uses the same
+   * artwork also carries the width/height the owner typed in.
+   */
+  function designFor(v: Voucher) {
+    const tpl = (data?.templates ?? []).find(
+      (tp) => v.artwork_path && tp.artwork_path === v.artwork_path,
+    );
+    const d = (tpl?.defaults ?? {}) as { width_px?: number; height_px?: number };
+    const w = Number(d.width_px) || 0;
+    const h = Number(d.height_px) || 0;
+    return {
+      artworkUrl: v.artwork_path ? (artworkUrls[v.artwork_path] ?? null) : null,
+      qr_x: Number(v.qr_x) || 0.78,
+      qr_y: Number(v.qr_y) || 0.5,
+      qr_size: Number(v.qr_size) || 0.32,
+      ...(w > 0 ? { width: w } : {}),
+      ...(h > 0 ? { height: h } : {}),
+    };
+  }
+
+  function exportOne(v: Voucher) {
+    downloadVoucherPng(
+      { code: v.code, label: v.label, rewardText: rewardSummary(v, "RM") },
+      designFor(v),
+    ).catch((e: Error) => toast.error(e.message));
+  }
+
+  function exportSheet(vs: Voucher[]) {
+    downloadVoucherSheetPng(
+      vs.map((v) => ({ code: v.code, label: v.label, rewardText: rewardSummary(v, "RM") })),
+      designFor(vs[0]!),
+    ).catch((e: Error) => toast.error(e.message));
+  }
 
   return (
     <StaffShell
@@ -126,6 +245,8 @@ function PromosPage() {
             <button
               onClick={(e) => {
                 (e.currentTarget.closest("details") as HTMLDetailsElement).open = false;
+                setVoucherInitial(null);
+                setApplyTemplateId(null);
                 setOpenVoucher(true);
               }}
               className="flex w-full items-center gap-2 rounded-xl p-2 text-left text-sm font-semibold hover:bg-muted"
@@ -135,6 +256,7 @@ function PromosPage() {
             <button
               onClick={(e) => {
                 (e.currentTarget.closest("details") as HTMLDetailsElement).open = false;
+                setGiftInitial(null);
                 setOpenGift(true);
               }}
               className="flex w-full items-center gap-2 rounded-xl p-2 text-left text-sm font-semibold hover:bg-muted"
@@ -151,128 +273,109 @@ function PromosPage() {
         <div className={prefs.filter === "all" ? "grid gap-5 lg:grid-cols-2" : "grid gap-5"}>
           {prefs.filter !== "gifts" && (
             <section className="space-y-3">
-              <Modal
-                open={openVoucher}
-                onClose={() => setOpenVoucher(false)}
-                title={t("new_voucher")}
-                size="sm"
-                footer={
-                  <>
-                    <button
-                      onClick={() => setOpenVoucher(false)}
-                      className="soft-press flex-1 rounded-2xl border border-border bg-card px-4 py-3 text-sm font-bold"
-                    >
-                      {t("cancel")}
-                    </button>
-                    <button
-                      onClick={() => vM.mutate()}
-                      disabled={!voucher.code || vM.isPending}
-                      className="soft-press flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-lift disabled:opacity-60"
-                    >
-                      {t("save")}
-                    </button>
-                  </>
-                }
-              >
-                <div className="space-y-3">
-                  <label className="block">
-                    <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                      {t("promo_code")}
-                    </span>
-                    <input
-                      value={voucher.code}
-                      onChange={(e) => setVoucher({ ...voucher, code: e.target.value })}
-                      placeholder={t("promo_code")}
-                      className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm uppercase outline-none focus:border-primary"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                      {t("label")}
-                    </span>
-                    <input
-                      value={voucher.label}
-                      onChange={(e) => setVoucher({ ...voucher, label: e.target.value })}
-                      placeholder="Merdeka treat"
-                      className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-                    />
-                  </label>
-                  <div className="flex gap-2">
-                    {(["percent", "fixed"] as const).map((k) => (
-                      <button
-                        key={k}
-                        onClick={() => setVoucher({ ...voucher, kind: k })}
-                        className={`soft-press flex-1 rounded-2xl px-3 py-2 text-sm font-bold ${
-                          voucher.kind === k
-                            ? "bg-primary text-primary-foreground"
-                            : "border border-border bg-card"
-                        }`}
-                      >
-                        {k === "percent" ? t("percent_off") : t("fixed_off")}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="block">
-                      <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                        {voucher.kind === "percent" ? t("percent_off") : t("fixed_off")}
-                      </span>
-                      <input
-                        type="number"
-                        min="0"
-                        value={voucher.value}
-                        onChange={(e) => setVoucher({ ...voucher, value: Number(e.target.value) })}
-                        className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                        {t("min_spend")}
-                      </span>
-                      <input
-                        type="number"
-                        min="0"
-                        value={voucher.min_spend}
-                        onChange={(e) =>
-                          setVoucher({ ...voucher, min_spend: Number(e.target.value) })
-                        }
-                        placeholder={t("min_spend")}
-                        className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-                      />
-                    </label>
-                  </div>
-                </div>
-              </Modal>
-
-              {(data?.vouchers ?? [])
-                .filter((v) =>
+              {batches
+                .filter(([, vs]) =>
                   prefs.query
-                    ? v.code.toLowerCase().includes(prefs.query.trim().toLowerCase())
+                    ? vs.some((v) =>
+                        v.code.toLowerCase().includes(prefs.query.trim().toLowerCase()),
+                      )
                     : true,
                 )
-                .map((v) => (
-                  <div
-                    key={v.id}
-                    className={`cozy-card flex items-center gap-3 ${viewPadClass(prefs)}`}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="font-display text-lg font-bold">{v.code}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {v.kind === "percent" ? `${Number(v.value)}%` : formatMoney(v.value)} ·{" "}
-                        {t("min_spend")} {formatMoney(v.min_spend)} ·{" "}
-                        {v.used_by_order ? t("used") : t("active")}
-                      </p>
+                .map(([batchId, vs]) => {
+                  const isBatch = vs.length > 1;
+                  const isOpen = openBatches.has(batchId);
+                  const usedTotal = vs.reduce((s, v) => s + (v.used_count || 0), 0);
+                  return (
+                    <div key={batchId} className={`cozy-card space-y-2 ${viewPadClass(prefs)}`}>
+                      <div className="flex items-center gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-display text-lg font-bold">{batchLabel(vs)}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {rewardSummary(vs[0]!, "RM")} · {t("min_spend")}{" "}
+                            {formatMoney(vs[0]!.min_spend)} · {t("used_count")} {usedTotal}/
+                            {isBatch ? vs.length : vs[0]!.usage_limit || "∞"}
+                          </p>
+                        </div>
+                        {isBatch && (
+                          <button
+                            onClick={() => exportSheet(vs)}
+                            className="soft-press grid size-9 place-items-center rounded-2xl bg-secondary text-secondary-foreground"
+                            aria-label={t("download_sheet")}
+                            title={t("download_sheet")}
+                          >
+                            <Printer className="size-4" />
+                          </button>
+                        )}
+                        {!isBatch && (
+                          <button
+                            onClick={() => exportOne(vs[0]!)}
+                            className="soft-press grid size-9 place-items-center rounded-2xl bg-secondary text-secondary-foreground"
+                            aria-label={t("download_png")}
+                            title={t("download_png")}
+                          >
+                            <Download className="size-4" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() =>
+                            isBatch
+                              ? setConfirmBatch({ batchId, label: batchLabel(vs) })
+                              : setConfirmV(vs[0]!)
+                          }
+                          className="soft-press grid size-9 place-items-center rounded-2xl bg-destructive/10 text-destructive"
+                          aria-label={t("delete")}
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                        {isBatch && (
+                          <button
+                            onClick={() =>
+                              setOpenBatches((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(batchId)) next.delete(batchId);
+                                else next.add(batchId);
+                                return next;
+                              })
+                            }
+                            className="soft-press grid size-9 place-items-center rounded-2xl border border-border"
+                            aria-label={isOpen ? t("collapse") : t("expand")}
+                          >
+                            <ChevronDown
+                              className={`size-4 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                            />
+                          </button>
+                        )}
+                      </div>
+                      {isBatch && isOpen && (
+                        <div className="space-y-1.5 border-t border-border/60 pt-2">
+                          {vs.map((v) => (
+                            <div key={v.id} className="flex items-center gap-2 text-sm">
+                              <span className="flex-1 font-mono">{v.code}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {v.used_count > 0 ? t("used") : t("active")}
+                              </span>
+                              <button
+                                onClick={() => exportOne(v)}
+                                className="soft-press grid size-7 place-items-center rounded-xl bg-secondary text-secondary-foreground"
+                                aria-label={t("download_png")}
+                              >
+                                <Download className="size-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setConfirmV(v)}
+                                className="soft-press grid size-7 place-items-center rounded-xl bg-destructive/10 text-destructive"
+                                aria-label={t("delete")}
+                              >
+                                <Trash2 className="size-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <button
-                      onClick={() => setConfirmV(v)}
-                      className="soft-press grid size-9 place-items-center rounded-2xl bg-destructive/10 text-destructive"
-                      aria-label={t("delete")}
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
-                  </div>
-                ))}
-              {!(data?.vouchers ?? []).length && (
+                  );
+                })}
+              {!batches.length && (
                 <EmptyState title={t("empty_vouchers_title")} hint={t("empty_vouchers_hint")} />
               )}
             </section>
@@ -280,69 +383,6 @@ function PromosPage() {
 
           {prefs.filter !== "vouchers" && (
             <section className="space-y-3">
-              <Modal
-                open={openGift}
-                onClose={() => setOpenGift(false)}
-                title={t("new_gift")}
-                size="sm"
-                footer={
-                  <>
-                    <button
-                      onClick={() => setOpenGift(false)}
-                      className="soft-press flex-1 rounded-2xl border border-border bg-card px-4 py-3 text-sm font-bold"
-                    >
-                      {t("cancel")}
-                    </button>
-                    <button
-                      onClick={() => gM.mutate()}
-                      disabled={!gift.name || gM.isPending}
-                      className="soft-press flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-lift disabled:opacity-60"
-                    >
-                      {t("save")}
-                    </button>
-                  </>
-                }
-              >
-                <div className="space-y-3">
-                  <input
-                    value={gift.name}
-                    onChange={(e) => setGift({ ...gift, name: e.target.value })}
-                    placeholder="Kopi O ais"
-                    className="w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-                  />
-                  <input
-                    value={gift.note}
-                    onChange={(e) => setGift({ ...gift, note: e.target.value })}
-                    placeholder={t("description")}
-                    className="w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="block">
-                      <span className="text-xs font-semibold text-muted-foreground">
-                        {t("gift_threshold")}
-                      </span>
-                      <input
-                        type="number"
-                        min="0"
-                        value={gift.threshold}
-                        onChange={(e) => setGift({ ...gift, threshold: Number(e.target.value) })}
-                        className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="text-xs font-semibold text-muted-foreground">Stock</span>
-                      <input
-                        type="number"
-                        min="0"
-                        value={gift.stock}
-                        onChange={(e) => setGift({ ...gift, stock: Number(e.target.value) })}
-                        className="mt-1 w-full rounded-2xl border border-border bg-card px-4 py-2.5 text-sm outline-none focus:border-primary"
-                      />
-                    </label>
-                  </div>
-                </div>
-              </Modal>
-
               {(data?.gifts ?? [])
                 .filter((g) =>
                   prefs.query
@@ -357,7 +397,7 @@ function PromosPage() {
                     <div className="min-w-0 flex-1">
                       <p className="font-display text-lg font-bold">{g.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        ≥ {formatMoney(g.threshold)} · {g.stock} left
+                        ≥ {formatMoney(g.threshold)} · {g.stock} {t("left")}
                       </p>
                     </div>
                     <button
@@ -377,6 +417,60 @@ function PromosPage() {
         </div>
       )}
 
+      <VoucherForm
+        open={openVoucher}
+        onClose={() => setOpenVoucher(false)}
+        products={data?.products ?? []}
+        templates={data?.templates ?? []}
+        initial={voucherInitial}
+        applyTemplateId={applyTemplateId}
+        submitting={vSaveM.isPending}
+        onSubmit={(value) => vSaveM.mutateAsync(value)}
+        onSaveTemplate={(name, value) =>
+          saveTpl({
+            data: {
+              name,
+              artwork_path: value.artwork_path,
+              qr_x: value.qr_x,
+              qr_y: value.qr_y,
+              qr_size: value.qr_size,
+              defaults: {
+                reward: value.reward,
+                value: value.value,
+                reward_product_id: value.reward_product_id,
+                nth_item: value.nth_item,
+                buy_qty: value.buy_qty,
+                get_qty: value.get_qty,
+                stackable: value.stackable,
+                max_discount: value.max_discount,
+                min_spend: value.min_spend,
+                min_items: value.min_items,
+                required_product_id: value.required_product_id,
+                required_qty: value.required_qty,
+                usage_limit: value.usage_limit,
+                terms: value.terms,
+                // Canvas size travels with the design so a reopened template
+                // restores the exact shape the owner drew the QR on.
+                width_px: value.width_px,
+                height_px: value.height_px,
+              },
+            },
+          }).then(invalidate)
+        }
+        onDeleteTemplate={(id) => delTpl({ data: { id } }).then(invalidate)}
+        onUploadArtwork={(dataUrl) => uploadArt({ data: { dataUrl } })}
+        artworkUrls={artworkUrls}
+      />
+
+      <GiftForm
+        open={openGift}
+        onClose={() => setOpenGift(false)}
+        products={data?.products ?? []}
+        initial={giftInitial}
+        submitting={gSaveM.isPending}
+        onSubmit={(value) => gSaveM.mutateAsync(value)}
+      />
+
       <ConfirmDialog
         open={!!confirmV}
         onClose={() => setConfirmV(null)}
@@ -388,6 +482,20 @@ function PromosPage() {
         }
         title={t("delete")}
         message={`${t("delete_confirm")} ${confirmV?.code ?? ""}`}
+        confirmLabel={t("delete")}
+        destructive
+      />
+      <ConfirmDialog
+        open={!!confirmBatch}
+        onClose={() => setConfirmBatch(null)}
+        onConfirm={() =>
+          confirmBatch &&
+          delV({ data: { batchId: confirmBatch.batchId } })
+            .then(invalidate)
+            .catch((e: Error) => toast.error(e.message))
+        }
+        title={t("delete_batch")}
+        message={`${t("delete_batch_confirm")} ${confirmBatch?.label ?? ""}`}
         confirmLabel={t("delete")}
         destructive
       />

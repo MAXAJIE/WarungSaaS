@@ -2,22 +2,31 @@ import { useEffect, useRef, useState } from "react";
 import { Modal } from "@/components/modal";
 import { useI18n } from "@/lib/i18n";
 
-const FRAME = 288; // on-screen crop frame, in px
-const OUTPUT = 800; // exported square, in px
+const MAX_FRAME_W = 288; // on-screen crop frame width, in px
+const DEFAULT_OUTPUT = 800; // exported width, in px, for square callers
 
 /**
- * Square cropper. Menu photos are shown in square tiles everywhere, so the
- * owner picks the square here instead of letting the browser cut it blindly.
- * Returns a JPEG data URL of exactly OUTPUT x OUTPUT pixels.
+ * Generic cropper. Callers pass an `aspect` (width / height) so the crop
+ * frame — and the exported canvas — matches whatever shape the artwork needs
+ * (square product photos, wide voucher artwork, etc). Returns a JPEG data URL
+ * of exactly outputWidth x round(outputWidth / aspect) pixels.
  */
 export function ImageCropper({
   file,
   onCancel,
   onCropped,
+  aspect = 1,
+  outputWidth = DEFAULT_OUTPUT,
+  title,
+  hint,
 }: {
   file: File;
   onCancel: () => void;
   onCropped: (dataUrl: string) => void;
+  aspect?: number;
+  outputWidth?: number;
+  title?: string;
+  hint?: string;
 }) {
   const { t } = useI18n();
   const [src, setSrc] = useState<string | null>(null);
@@ -25,6 +34,10 @@ export function ImageCropper({
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const drag = useRef<{ x: number; y: number } | null>(null);
+
+  const frameW = MAX_FRAME_W;
+  const frameH = Math.round(MAX_FRAME_W / aspect);
+  const outputHeight = Math.round(outputWidth / aspect);
 
   useEffect(() => {
     const url = URL.createObjectURL(file);
@@ -37,18 +50,19 @@ export function ImageCropper({
 
   if (!src || !size) {
     return (
-      <Modal open onClose={onCancel} title={t("crop_photo")}>
+      <Modal open onClose={onCancel} title={title ?? t("crop_photo")}>
         <p className="text-sm text-muted-foreground">{t("loading")}</p>
       </Modal>
     );
   }
 
-  const baseScale = FRAME / Math.min(size.w, size.h);
+  // Cover the frame in both axes: the smaller-relative side drives the scale.
+  const baseScale = Math.max(frameW / size.w, frameH / size.h);
   const scale = baseScale * zoom;
   const drawnW = size.w * scale;
   const drawnH = size.h * scale;
-  const maxX = Math.max(0, (drawnW - FRAME) / 2);
-  const maxY = Math.max(0, (drawnH - FRAME) / 2);
+  const maxX = Math.max(0, (drawnW - frameW) / 2);
+  const maxY = Math.max(0, (drawnH - frameH) / 2);
   const clamped = {
     x: Math.min(maxX, Math.max(-maxX, offset.x)),
     y: Math.min(maxY, Math.max(-maxY, offset.y)),
@@ -56,17 +70,17 @@ export function ImageCropper({
 
   function confirm() {
     const canvas = document.createElement("canvas");
-    canvas.width = OUTPUT;
-    canvas.height = OUTPUT;
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const k = OUTPUT / FRAME;
+    const k = outputWidth / frameW;
     const img = new Image();
     img.onload = () => {
       ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, OUTPUT, OUTPUT);
-      const left = (FRAME - drawnW) / 2 + clamped.x;
-      const top = (FRAME - drawnH) / 2 + clamped.y;
+      ctx.fillRect(0, 0, outputWidth, outputHeight);
+      const left = (frameW - drawnW) / 2 + clamped.x;
+      const top = (frameH - drawnH) / 2 + clamped.y;
       ctx.drawImage(img, left * k, top * k, drawnW * k, drawnH * k);
       onCropped(canvas.toDataURL("image/jpeg", 0.88));
     };
@@ -77,8 +91,8 @@ export function ImageCropper({
     <Modal
       open
       onClose={onCancel}
-      title={t("crop_photo")}
-      subtitle={t("crop_hint")}
+      title={title ?? t("crop_photo")}
+      subtitle={hint ?? t("crop_hint")}
       footer={
         <>
           <button
@@ -96,10 +110,10 @@ export function ImageCropper({
         </>
       }
     >
-      <div className="flex flex-col items-center gap-4">
+      <div className="flex w-full flex-col items-center gap-4">
         <div
-          className="relative overflow-hidden rounded-2xl border border-border bg-muted"
-          style={{ width: FRAME, height: FRAME, touchAction: "none" }}
+          className="relative w-full max-w-[288px] overflow-hidden rounded-2xl border border-border bg-muted"
+          style={{ aspectRatio: `${frameW} / ${frameH}`, touchAction: "none" }}
           onPointerDown={(e) => {
             drag.current = { x: e.clientX - clamped.x, y: e.clientY - clamped.y };
             e.currentTarget.setPointerCapture(e.pointerId);
@@ -119,10 +133,10 @@ export function ImageCropper({
             draggable={false}
             className="pointer-events-none absolute select-none"
             style={{
-              width: drawnW,
-              height: drawnH,
-              left: (FRAME - drawnW) / 2 + clamped.x,
-              top: (FRAME - drawnH) / 2 + clamped.y,
+              width: `${(drawnW / frameW) * 100}%`,
+              height: `${(drawnH / frameH) * 100}%`,
+              left: `${(((frameW - drawnW) / 2 + clamped.x) / frameW) * 100}%`,
+              top: `${(((frameH - drawnH) / 2 + clamped.y) / frameH) * 100}%`,
               maxWidth: "none",
             }}
           />

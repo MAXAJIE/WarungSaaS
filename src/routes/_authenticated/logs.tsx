@@ -47,11 +47,7 @@ function LogsPage() {
   const rows = logs.data?.logs ?? [];
 
   return (
-    <StaffShell
-      title={t("nav_logs")}
-      roles={roles}
-      storeName={me.data?.store?.name ?? null}
-    >
+    <StaffShell title={t("nav_logs")} roles={roles} storeName={me.data?.store?.name ?? null}>
       <div className="mx-auto max-w-3xl px-4 py-6">
         <h1 className="font-display text-xl font-bold">{t("nav_logs")}</h1>
         {isOwner && (
@@ -63,7 +59,9 @@ function LogsPage() {
                   type="button"
                   onClick={() => setScope(k)}
                   className={`soft-press flex-1 rounded-2xl px-3 py-2 text-sm font-bold ${
-                    scope === k ? "bg-primary text-primary-foreground" : "border border-border bg-card"
+                    scope === k
+                      ? "bg-primary text-primary-foreground"
+                      : "border border-border bg-card"
                   }`}
                 >
                   {k === "mine" ? t("logs_mine") : t("logs_everyone")}

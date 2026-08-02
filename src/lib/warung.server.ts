@@ -1,6 +1,18 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
+import { stackDiscount, voucherBlockers, type OrderLine, type VoucherRule } from "./vouchers";
+
+/**
+ * Tables and columns added by the versatile-voucher migration are not part of
+ * the generated `Database` types yet, so those reads go through a deliberately
+ * loose view of the same admin client.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function looseDb(): any {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return supabaseAdmin as any;
+}
 
 export type AuthedCtx = {
   supabase: SupabaseClient<Database>;
@@ -152,11 +164,83 @@ export async function signPhotos<T extends { photo_url: string | null }>(
   );
 }
 
-/** Recalculates subtotal/discount/total/cost from items + voucher. */
+/** Every voucher attached to a ticket, old single column included. */
+export async function orderVouchers(orderId: string): Promise<VoucherRule[]> {
+  const { data: links } = await looseDb()
+    .from("order_vouchers")
+    .select("voucher_id")
+    .eq("order_id", orderId);
+  const { data: order } = await supabaseAdmin
+    .from("orders")
+    .select("voucher_id")
+    .eq("id", orderId)
+    .maybeSingle();
+
+  const ids = Array.from(
+    new Set([
+      ...((links ?? []) as Array<{ voucher_id: string }>).map((l) => l.voucher_id),
+      ...(order?.voucher_id ? [order.voucher_id] : []),
+    ]),
+  );
+  if (!ids.length) return [];
+  const { data: rows } = await supabaseAdmin.from("vouchers").select("*").in("id", ids);
+  return ((rows ?? []) as unknown as VoucherRow[]).map(toRule);
+}
+
+/** Raw voucher row shape after the versatile-voucher migration. */
+type VoucherRow = Record<string, unknown> & { id: string; code: string };
+
+export function toRule(row: VoucherRow): VoucherRule {
+  const num = (k: string, fallback = 0) => Number(row[k] ?? fallback) || fallback;
+  return {
+    id: row.id,
+    code: row.code,
+    label: String(row["label"] ?? ""),
+    reward: (row["reward"] as VoucherRule["reward"]) ?? "order_percent",
+    value: num("value"),
+    reward_product_id: (row["reward_product_id"] as string | null) ?? null,
+    nth_item: num("nth_item", 2),
+    buy_qty: num("buy_qty", 1),
+    get_qty: num("get_qty", 1),
+    stackable: Boolean(row["stackable"]),
+    max_discount: num("max_discount"),
+    min_spend: num("min_spend"),
+    min_items: num("min_items"),
+    required_product_id: (row["required_product_id"] as string | null) ?? null,
+    required_qty: num("required_qty", 1),
+    usage_limit: num("usage_limit", 1),
+    used_count: num("used_count"),
+    expires_at: (row["expires_at"] as string | null) ?? null,
+    is_active: row["is_active"] !== false,
+    terms: String(row["terms"] ?? ""),
+  };
+}
+
+export async function orderLines(orderId: string): Promise<OrderLine[]> {
+  const { data: items } = await supabaseAdmin
+    .from("order_items")
+    .select("product_id, qty, unit_price")
+    .eq("order_id", orderId);
+  return (items ?? []).map((i) => ({
+    product_id: i.product_id,
+    qty: i.qty,
+    unit_price: Number(i.unit_price),
+  }));
+}
+
+/** Unmet terms per attached voucher. Empty object = the ticket may be paid. */
+export async function orderVoucherBlockers(orderId: string) {
+  const [vouchers, lines] = await Promise.all([orderVouchers(orderId), orderLines(orderId)]);
+  return vouchers
+    .map((v) => ({ code: v.code, label: v.label, blockers: voucherBlockers(v, lines) }))
+    .filter((r) => r.blockers.length > 0);
+}
+
+/** Recalculates subtotal/discount/total/cost from items + every voucher. */
 export async function recomputeOrder(orderId: string) {
   const { data: order } = await supabaseAdmin
     .from("orders")
-    .select("*, voucher:vouchers(*)")
+    .select("*")
     .eq("id", orderId)
     .maybeSingle();
   if (!order) throw new Error("Order not found");
@@ -169,18 +253,21 @@ export async function recomputeOrder(orderId: string) {
   const subtotal = (items ?? []).reduce((s, i) => s + Number(i.unit_price) * i.qty, 0);
   const costTotal = (items ?? []).reduce((s, i) => s + Number(i.unit_cost) * i.qty, 0);
 
-  let discount = 0;
-  const voucher = (order as { voucher?: { kind: string; value: number | string } | null }).voucher;
-  if (voucher) {
-    discount =
-      voucher.kind === "percent"
-        ? (subtotal * Number(voucher.value)) / 100
-        : Math.min(subtotal, Number(voucher.value));
-  }
+  const lines: OrderLine[] = (items ?? []).map((i) => ({
+    product_id: i.product_id,
+    qty: i.qty,
+    unit_price: Number(i.unit_price),
+  }));
+  const vouchers = await orderVouchers(orderId);
+  let discount = stackDiscount(vouchers, lines).total;
+
   // An event discount is a manual, reason-tagged reduction the counter may add
   // once the ticket clears the store's event spend threshold.
-  const special = Math.max(0, Number((order as { special_discount?: number | string }).special_discount ?? 0));
-  discount += special;
+  const special = Math.max(
+    0,
+    Number((order as { special_discount?: number | string }).special_discount ?? 0),
+  );
+  discount = Math.min(subtotal, discount + special);
   const total = Math.max(0, subtotal - discount);
 
   const { data: updated } = await supabaseAdmin
@@ -201,7 +288,9 @@ export async function recomputeOrder(orderId: string) {
 export async function loadFullOrder(orderId: string) {
   const { data } = await supabaseAdmin
     .from("orders")
-    .select("*, items:order_items(*), voucher:vouchers(code,label,kind,value), gift:gifts(name)")
+    .select(
+      "*, items:order_items(*), voucher:vouchers(code,label,kind,value), gift:gifts(name), vouchers:order_vouchers(voucher:vouchers(*))",
+    )
     .eq("id", orderId)
     .maybeSingle();
   return data;

@@ -43,7 +43,6 @@ export function useStoreGuard() {
   return { me, hasStore };
 }
 
-
 type NavItem = { to: string; label: string; icon: typeof Soup };
 /** A sidebar block that belongs to one hat the person wears. */
 type NavGroup = { role: StoreRole; label: string; items: NavItem[] };
@@ -150,9 +149,7 @@ export function StaffShell({
       { to: "/dashboard", label: t("nav_orders"), icon: ClipboardList },
     ]);
   if (allRoles.includes("kitchen"))
-    push("kitchen", t("role_kitchen"), [
-      { to: "/dashboard", label: t("nav_kitchen"), icon: Soup },
-    ]);
+    push("kitchen", t("role_kitchen"), [{ to: "/dashboard", label: t("nav_kitchen"), icon: Soup }]);
   if (allRoles.includes("pickup"))
     push("pickup", t("role_pickup"), [{ to: "/dashboard", label: t("nav_pickup"), icon: Soup }]);
 
@@ -272,7 +269,6 @@ export function StaffShell({
     </div>
   );
 }
-
 
 export function Loading() {
   const { t } = useI18n();

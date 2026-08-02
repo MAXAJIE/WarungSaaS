@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Loading, StaffShell, useStoreGuard } from "@/components/staff-shell";
 import { useI18n } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
@@ -23,13 +23,36 @@ type Data = {
     margin: number;
   };
   byDay: Array<{ day: string; revenue: number; cost: number; profit: number; orders: number }>;
+  todayOrders: Array<{ ts: string; total: number }>;
   products: Array<{ name: string; qty: number; revenue: number; profit: number }>;
 };
+
+const BUCKET_MINUTES = { "15m": 15, "30m": 30, "1h": 60 } as const;
+type BucketUnit = keyof typeof BUCKET_MINUTES;
+
+/** Buckets today's paid orders into fixed-size time slots for the intraday chart. */
+function bucketToday(orders: Data["todayOrders"], unit: BucketUnit) {
+  const minutes = BUCKET_MINUTES[unit];
+  const count = Math.ceil((24 * 60) / minutes);
+  const buckets = Array.from({ length: count }, (_, i) => {
+    const startMin = i * minutes;
+    const h = Math.floor(startMin / 60);
+    const m = startMin % 60;
+    return { label: `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`, revenue: 0 };
+  });
+  for (const o of orders) {
+    const d = new Date(o.ts);
+    const idx = Math.min(count - 1, Math.floor((d.getHours() * 60 + d.getMinutes()) / minutes));
+    buckets[idx]!.revenue += o.total;
+  }
+  return buckets;
+}
 
 function AnalyticsPage() {
   const { t } = useI18n();
   const { me, hasStore } = useStoreGuard();
   const [days, setDays] = useState(7);
+  const [bucketUnit, setBucketUnit] = useState<BucketUnit>("30m");
   const fn = useServerFn(getAnalytics);
   const q = useQuery({
     queryKey: ["analytics", days],
@@ -39,11 +62,22 @@ function AnalyticsPage() {
 
   const data = q.data as Data | undefined;
   const peak = Math.max(1, ...(data?.byDay ?? []).map((d) => d.revenue));
+  const intraday = useMemo(
+    () => bucketToday(data?.todayOrders ?? [], bucketUnit),
+    [data?.todayOrders, bucketUnit],
+  );
+  const intradayPeak = Math.max(1, ...intraday.map((b) => b.revenue));
 
   return (
     <StaffShell
       title={t("nav_analytics")}
-      roles={(me.data?.roles?.length ? me.data.roles : me.data?.member ? [me.data.member.role] : []) as never}
+      roles={
+        (me.data?.roles?.length
+          ? me.data.roles
+          : me.data?.member
+            ? [me.data.member.role]
+            : []) as never
+      }
       storeName={me.data?.store?.name ?? null}
     >
       <div className="mb-4 flex gap-2">
@@ -78,6 +112,42 @@ function AnalyticsPage() {
                 <p className="mt-1 font-display text-2xl font-bold">{c.value}</p>
               </div>
             ))}
+          </div>
+
+          <div className="cozy-card p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-display text-lg font-bold">{t("intraday_revenue")}</h2>
+              <div className="flex gap-1.5 rounded-2xl bg-muted/50 p-1">
+                {(Object.keys(BUCKET_MINUTES) as BucketUnit[]).map((u) => (
+                  <button
+                    key={u}
+                    onClick={() => setBucketUnit(u)}
+                    className={`soft-press rounded-xl px-3 py-1.5 text-xs font-bold transition-colors ${
+                      bucketUnit === u
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    {t(`bucket_${u}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="mt-4 flex h-40 items-end gap-[2px] overflow-x-auto">
+              {intraday.map((b, i) => (
+                <div
+                  key={i}
+                  className="min-w-[3px] flex-1 rounded-t bg-primary/70"
+                  style={{ height: `${(b.revenue / intradayPeak) * 100}%` }}
+                  title={`${b.label} · ${formatMoney(b.revenue, data.currency)}`}
+                />
+              ))}
+            </div>
+            <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
+              <span>00:00</span>
+              <span>12:00</span>
+              <span>23:59</span>
+            </div>
           </div>
 
           <div className="cozy-card p-5">
