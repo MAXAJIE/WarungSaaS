@@ -1,0 +1,12 @@
+REVOKE ALL ON FUNCTION public.assign_order_no(UUID) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.cleanup_expired_orders() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.handle_new_user() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.touch_updated_at() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.my_store_id() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.my_role() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.is_cashier() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.assign_order_no(UUID) TO service_role;
+GRANT EXECUTE ON FUNCTION public.cleanup_expired_orders() TO service_role;
+GRANT EXECUTE ON FUNCTION public.my_store_id() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.my_role() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.is_cashier() TO authenticated, service_role;

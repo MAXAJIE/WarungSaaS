@@ -1,0 +1,59 @@
+import { createServerFn } from "@tanstack/react-start";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import {
+  advanceOrderImpl,
+  applyVoucherImpl,
+  approveOrderImpl,
+  cancelOrderImpl,
+  createWalkInImpl,
+  findOrderByCodeImpl,
+  listOrdersImpl,
+  setGiftImpl,
+} from "./orders.server";
+import { analyticsImpl } from "./analytics.server";
+
+export const listOrders = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => listOrdersImpl(context));
+
+export const createWalkInOrder = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (d: { customer_name: string; note?: string; items: { product_id: string; qty: number }[] }) => d,
+  )
+  .handler(async ({ context, data }) => createWalkInImpl(context, data));
+
+export const findOrderByCode = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { code: string }) => d)
+  .handler(async ({ context, data }) => findOrderByCodeImpl(context, data));
+
+export const applyVoucher = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { orderId: string; code: string }) => d)
+  .handler(async ({ context, data }) => applyVoucherImpl(context, data));
+
+export const setOrderGift = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { orderId: string; giftId: string | null }) => d)
+  .handler(async ({ context, data }) => setGiftImpl(context, data));
+
+export const approveOrder = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { orderId: string }) => d)
+  .handler(async ({ context, data }) => approveOrderImpl(context, data));
+
+export const advanceOrder = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { orderId: string; action: "start" | "kitchen_done" | "receive" | "complete" }) => d)
+  .handler(async ({ context, data }) => advanceOrderImpl(context, data));
+
+export const cancelOrder = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { orderId: string; reason?: string }) => d)
+  .handler(async ({ context, data }) => cancelOrderImpl(context, data));
+
+export const getAnalytics = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { days: number }) => d)
+  .handler(async ({ context, data }) => analyticsImpl(context, data));
