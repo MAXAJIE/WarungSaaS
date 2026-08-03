@@ -301,7 +301,10 @@ export async function applyVoucherImpl(ctx: AuthedCtx, data: { orderId: string; 
   if (!order.voucher_id)
     await supabaseAdmin.from("orders").update({ voucher_id: rule.id }).eq("id", order.id);
 
-  const updated = await recomputeOrder(order.id);
+  await recomputeOrder(order.id);
+  // The counter popup re-renders straight from this row, so it must carry the
+  // full relations (items, vouchers, gift) — a bare row makes `items` undefined.
+  const updated = await loadFullOrder(order.id);
   const blockers = await orderVoucherBlockers(order.id);
   await logAction({
     storeId: store.id,

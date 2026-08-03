@@ -153,7 +153,9 @@ export function PaymentReview({
     () => Object.fromEntries(products.map((p) => [p.id, p.name])),
     [products],
   );
-  const attached = order?.vouchers?.map((v) => v.voucher) ?? [];
+  const attached = (order?.vouchers ?? []).map((v) => v.voucher);
+  /** Never trust a partially-loaded ticket: the list must always be iterable. */
+  const items = order?.items ?? [];
   const eligibleGifts = order
     ? gifts.filter((g) => g.is_active && Number(order.total) >= Number(g.threshold))
     : [];
@@ -308,14 +310,14 @@ export function PaymentReview({
             mind about, as long as one item stays. */}
         <Block title={t("ticket_cart")}>
           <ul className="space-y-1 text-sm">
-            {order.items.map((i) => (
+            {items.map((i) => (
               <li key={i.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
                 <span className="min-w-0 truncate">
                   <span className="font-semibold">{i.qty}×</span> {i.name_snapshot}
                 </span>
                 <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
                   {formatMoney(Number(i.unit_price) * i.qty, currency)}
-                  {order.items.length > 1 && (
+                  {items.length > 1 && (
                     <button
                       type="button"
                       onClick={() => removeLineM.mutate(i.id)}

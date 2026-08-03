@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Ban, Check, ChevronDown, QrCode, RefreshCw, Soup, Store, Timer, X } from "lucide-react";
 import { Loading, StaffShell, useMe, type StoreRole } from "@/components/staff-shell";
@@ -637,6 +637,22 @@ function CashierBoard({ roles: _roles }: { roles: StoreRole[] }) {
   const [confirm, setConfirm] = useState<OrderRow | null>(null);
   /** The ticket the payment popup is reviewing, from a scan or a fresh walk-in. */
   const [review, setReview] = useState<CounterOrder | null>(null);
+  /**
+   * A walk-in ticket only exists because the popup is open. Closing or
+   * cancelling that popup must delete it again, otherwise it lingers forever as
+   * a ghost "awaiting payment" the counter can never scan.
+   */
+  const walkInId = useRef<string | null>(null);
+
+  function discardWalkIn() {
+    const id = walkInId.current;
+    walkInId.current = null;
+    setReview(null);
+    if (!id) return;
+    void cancel({ data: { orderId: id, reason: "walk-in cancelled at counter" } })
+      .catch(() => undefined)
+      .finally(() => qc.invalidateQueries({ queryKey: ["orders"] }));
+  }
 
   return (
     <div className="space-y-5">
@@ -668,7 +684,14 @@ function CashierBoard({ roles: _roles }: { roles: StoreRole[] }) {
       )}
 
       {tab === "new" && (
-        <WalkInPanel products={products} currency={currency} onCreated={setReview} />
+        <WalkInPanel
+          products={products}
+          currency={currency}
+          onCreated={(o) => {
+            walkInId.current = o.id;
+            setReview(o);
+          }}
+        />
       )}
 
       {tab === "live" && (
@@ -737,8 +760,12 @@ function CashierBoard({ roles: _roles }: { roles: StoreRole[] }) {
         products={products}
         gifts={gifts}
         currency={currency}
-        onClose={() => setReview(null)}
-        onApproved={() => setTab("live")}
+        onClose={discardWalkIn}
+        onApproved={() => {
+          // Approved tickets are real orders now — keep them.
+          walkInId.current = null;
+          setTab("live");
+        }}
       />
 
       {/* Cancelling is irreversible, so it never happens on a single stray tap. */}
