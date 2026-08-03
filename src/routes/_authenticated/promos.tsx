@@ -12,6 +12,7 @@ import { useI18n } from "@/lib/i18n";
 import { formatMoney } from "@/lib/money";
 import { rewardSummary, type VoucherReward } from "@/lib/vouchers";
 import { downloadVoucherPng, downloadVoucherSheetPng } from "@/components/voucher-canvas";
+import { normalizeLayout } from "@/lib/voucher-design";
 import {
   VoucherForm,
   type PromoProduct,
@@ -32,7 +33,6 @@ import {
 } from "@/lib/staff.functions";
 
 /** localStorage key for the export-time "print the code" toggle. */
-const SHOW_CODE_KEY = "warung.voucher.showCode";
 
 
 
@@ -58,7 +58,8 @@ type Voucher = {
   qr_x: number | string;
   qr_y: number | string;
   qr_size: number | string;
-  expires_at: string | null;
+  /** Layout document; empty on rows created before the layout editor. */
+  design: Record<string, unknown> | null;
   terms: string;
 };
 type GiftRow = {
@@ -155,7 +156,9 @@ function PromosPage() {
       saveV({
         data: {
           ...value,
-          expires_at: value.expires_at || null,
+          // The layout document carries every placement, toggle and the export
+          // size; the server stores it verbatim on the voucher row.
+          design: value.layout as unknown as Record<string, unknown>,
         },
       }),
     onSuccess: (res: { vouchers: Voucher[] }) => {
@@ -180,45 +183,23 @@ function PromosPage() {
   });
 
   /**
-   * Owner-controlled switch for what the customer sees on the exported voucher.
-   * The QR always encodes the code; this only decides whether the code is also
-   * printed as text. Kept in localStorage so the choice survives a reload
-   * without touching the vouchers table.
-   */
-  const [showCode, setShowCode] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    return window.localStorage.getItem(SHOW_CODE_KEY) !== "0";
-  });
-  useEffect(() => {
-    window.localStorage.setItem(SHOW_CODE_KEY, showCode ? "1" : "0");
-  }, [showCode]);
-
-  /**
-
-   * Exported PNGs must match what the owner saw in the placement preview, so the
-   * canvas size travels with the artwork: whichever saved design uses the same
-   * artwork also carries the width/height the owner typed in.
+   * Exported PNGs must match what the owner saw in the editor, so the whole
+   * layout document travels with the voucher row. Rows minted before the editor
+   * existed fall back to their legacy flat QR columns.
    */
   function designFor(v: Voucher) {
-    const tpl = (data?.templates ?? []).find(
-      (tp) => v.artwork_path && tp.artwork_path === v.artwork_path,
-    );
-    const d = (tpl?.defaults ?? {}) as { width_px?: number; height_px?: number };
-    const w = Number(d.width_px) || 0;
-    const h = Number(d.height_px) || 0;
+    const stored = v.design && Object.keys(v.design).length ? v.design : null;
     return {
       artworkUrl: v.artwork_path ? (artworkUrls[v.artwork_path] ?? null) : null,
-      qr_x: Number(v.qr_x) || 0.78,
-      qr_y: Number(v.qr_y) || 0.5,
-      qr_size: Number(v.qr_size) || 0.32,
-      ...(w > 0 ? { width: w } : {}),
-      ...(h > 0 ? { height: h } : {}),
+      layout: normalizeLayout(
+        stored ?? { qr_x: v.qr_x, qr_y: v.qr_y, qr_size: v.qr_size },
+      ),
     };
   }
 
   function exportOne(v: Voucher) {
     downloadVoucherPng(
-      { code: v.code, label: v.label, rewardText: rewardSummary(v, "RM"), showCode },
+      { code: v.code, label: v.label, rewardText: rewardSummary(v, "RM"), terms: v.terms },
       designFor(v),
     ).catch((e: Error) => toast.error(e.message));
   }
@@ -229,7 +210,7 @@ function PromosPage() {
         code: v.code,
         label: v.label,
         rewardText: rewardSummary(v, "RM"),
-        showCode,
+        terms: v.terms,
       })),
       designFor(vs[0]!),
     ).catch((e: Error) => toast.error(e.message));
@@ -263,17 +244,6 @@ function PromosPage() {
           />
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
-          {/* Owner picks what the customer sees on the downloaded voucher. */}
-          <label className="inline-flex min-w-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-xs font-semibold shadow-cozy">
-            <input
-              type="checkbox"
-              checked={showCode}
-              onChange={(e) => setShowCode(e.target.checked)}
-              className="size-4 shrink-0 accent-[var(--color-primary)]"
-            />
-            <span className="truncate">{t("voucher_show_code")}</span>
-          </label>
-
           <details className="group relative shrink-0">
             <summary className="soft-press inline-flex cursor-pointer list-none items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground shadow-lift">
               <Plus className="size-4" /> {t("new_promo")}
@@ -473,9 +443,12 @@ function PromosPage() {
             data: {
               name,
               artwork_path: value.artwork_path,
-              qr_x: value.qr_x,
-              qr_y: value.qr_y,
-              qr_size: value.qr_size,
+              qr_x: value.layout.elements.qr.x,
+              qr_y: value.layout.elements.qr.y,
+              qr_size: value.layout.elements.qr.size,
+              // The full layout, so reopening the template restores every
+              // toggle and placement exactly as it was saved.
+              design: value.layout as unknown as Record<string, unknown>,
               defaults: {
                 reward: value.reward,
                 value: value.value,
@@ -491,10 +464,6 @@ function PromosPage() {
                 required_qty: value.required_qty,
                 usage_limit: value.usage_limit,
                 terms: value.terms,
-                // Canvas size travels with the design so a reopened template
-                // restores the exact shape the owner drew the QR on.
-                width_px: value.width_px,
-                height_px: value.height_px,
               },
             },
           }).then(invalidate)
@@ -502,6 +471,7 @@ function PromosPage() {
         onDeleteTemplate={(id) => delTpl({ data: { id } }).then(invalidate)}
         onUploadArtwork={(dataUrl) => uploadArt({ data: { dataUrl } })}
         artworkUrls={artworkUrls}
+        currency="RM"
       />
 
       <GiftForm

@@ -2,11 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Save, Trash2, Upload } from "lucide-react";
 import { Modal, ConfirmDialog } from "@/components/modal";
-import { ImageCropper } from "@/components/image-cropper";
 import { useI18n } from "@/lib/i18n";
-import type { VoucherReward } from "@/lib/vouchers";
-import { VOUCHER_W, VOUCHER_H } from "@/components/voucher-canvas";
-import QRCode from "qrcode";
+import { rewardSummary, type VoucherReward } from "@/lib/vouchers";
+import { VoucherLayoutEditor } from "@/components/voucher-layout-editor";
+import { DEFAULT_LAYOUT, normalizeLayout, type VoucherLayout } from "@/lib/voucher-design";
 
 export type PromoProduct = {
   id: string;
@@ -23,6 +22,7 @@ export type VoucherTemplateRow = {
   qr_y: number | string;
   qr_size: number | string;
   defaults: Record<string, unknown> | null;
+  design?: Record<string, unknown> | null;
 };
 
 export type VoucherFormValue = {
@@ -45,16 +45,13 @@ export type VoucherFormValue = {
   required_qty: number;
   usage_limit: number;
   terms: string;
-  expires_at: string;
   template_id: string | null;
   artwork_path: string | null;
-  qr_x: number;
-  qr_y: number;
-  qr_size: number;
-  /** Voucher card dimensions in px, used only to shape the artwork crop and
-   * QR placement preview — the export always renders at this aspect. */
-  width_px: number;
-  height_px: number;
+  /**
+   * Full layout document: which elements print, where they sit and how big
+   * they are, plus the export size (0 = keep the artwork's own pixels).
+   */
+  layout: VoucherLayout;
   is_active: boolean;
 };
 
@@ -86,14 +83,9 @@ function blank(): VoucherFormValue {
     required_qty: 1,
     usage_limit: 1,
     terms: "",
-    expires_at: "",
     template_id: null,
     artwork_path: null,
-    qr_x: 0.78,
-    qr_y: 0.5,
-    qr_size: 0.32,
-    width_px: VOUCHER_W,
-    height_px: VOUCHER_H,
+    layout: structuredClone(DEFAULT_LAYOUT),
     is_active: true,
   };
 }
@@ -159,99 +151,6 @@ function ProductPicker({
   );
 }
 
-/**
- * Drag-and-resize placement of the QR rectangle over the cropped artwork. A
- * real sample QR code is rendered inside the frame (not a plain box) so the
- * preview matches the exported PNG pixel-for-pixel: same aspect, same
- * fractional position, same relative size.
- */
-function QrPlacer({
-  artworkUrl,
-  code,
-  qr_x,
-  qr_y,
-  qr_size,
-  aspect,
-  onChange,
-}: {
-  artworkUrl: string;
-  code: string;
-  qr_x: number;
-  qr_y: number;
-  qr_size: number;
-  aspect: number;
-  onChange: (v: { qr_x: number; qr_y: number; qr_size: number }) => void;
-}) {
-  const { t } = useI18n();
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
-  const FRAME_W = 320;
-  const FRAME_H = Math.round(FRAME_W / aspect);
-
-  useEffect(() => {
-    let cancelled = false;
-    QRCode.toDataURL(code || "SAMPLE", { margin: 0, width: 256 })
-      .then((url) => !cancelled && setQrDataUrl(url))
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [code]);
-
-  return (
-    <div className="flex w-full flex-col items-center gap-3">
-      <div
-        className="relative w-full max-w-[320px] overflow-hidden rounded-2xl border border-border bg-muted"
-        style={{ aspectRatio: `${FRAME_W} / ${FRAME_H}`, touchAction: "none" }}
-        onPointerDown={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          const move = (ev: PointerEvent) => {
-            const x = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
-            const y = Math.min(1, Math.max(0, (ev.clientY - rect.top) / rect.height));
-            onChange({ qr_x: x, qr_y: y, qr_size });
-          };
-          move(e.nativeEvent);
-          const up = () => {
-            window.removeEventListener("pointermove", move);
-            window.removeEventListener("pointerup", up);
-          };
-          window.addEventListener("pointermove", move);
-          window.addEventListener("pointerup", up);
-        }}
-      >
-        <img
-          src={artworkUrl}
-          alt=""
-          className="pointer-events-none absolute inset-0 size-full object-cover"
-        />
-        <div
-          className="pointer-events-none absolute rounded-lg border-2 border-primary bg-card/90 p-[3%] shadow-lift"
-          style={{
-            width: `${qr_size * 100}%`,
-            height: `${qr_size * aspect * (FRAME_H / FRAME_W) * 100}%`,
-            left: `${qr_x * 100 - (qr_size * 100) / 2}%`,
-            top: `${qr_y * 100 - (qr_size * (FRAME_W / FRAME_H) * 100) / 2}%`,
-          }}
-        >
-          {qrDataUrl && <img src={qrDataUrl} alt="" className="size-full object-contain" />}
-        </div>
-      </div>
-      <label className="flex w-full items-center gap-3 text-xs font-semibold text-muted-foreground">
-        {t("qr_size")}
-        <input
-          type="range"
-          min={0.12}
-          max={0.6}
-          step={0.01}
-          value={qr_size}
-          onChange={(e) => onChange({ qr_x, qr_y, qr_size: Number(e.target.value) })}
-          className="flex-1"
-        />
-      </label>
-      <p className="text-xs text-muted-foreground">{t("design_qr_hint")}</p>
-    </div>
-  );
-}
-
 export function VoucherForm({
   open,
   onClose,
@@ -264,6 +163,7 @@ export function VoucherForm({
   onDeleteTemplate,
   onUploadArtwork,
   artworkUrls,
+  currency,
   submitting,
 }: {
   open: boolean;
@@ -277,13 +177,13 @@ export function VoucherForm({
   onDeleteTemplate: (id: string) => Promise<unknown>;
   onUploadArtwork: (dataUrl: string) => Promise<{ path: string; url: string | null }>;
   artworkUrls: Record<string, string>;
+  /** Store currency, used only to word the sample reward line in the preview. */
+  currency?: string;
   submitting?: boolean;
 }) {
   const { t } = useI18n();
   const [value, setValue] = useState<VoucherFormValue>(blank());
   const [localArtworkPreview, setLocalArtworkPreview] = useState<string | null>(null);
-  const [cropFile, setCropFile] = useState<File | null>(null);
-  const [croppedForPlacement, setCroppedForPlacement] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [templateName, setTemplateName] = useState("");
   const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState<VoucherTemplateRow | null>(
@@ -291,14 +191,12 @@ export function VoucherForm({
   );
   const isEdit = !!value.id;
   const isBatchCreate = !isEdit && value.quantity > 1;
-  const aspect =
-    Math.max(0.2, value.width_px || VOUCHER_W) / Math.max(0.2, value.height_px || VOUCHER_H);
 
   useEffect(() => {
     if (!open) return;
-    setValue({ ...blank(), ...(initial ?? {}) });
+    const seed = { ...blank(), ...(initial ?? {}) };
+    setValue({ ...seed, layout: normalizeLayout(seed.layout) });
     setLocalArtworkPreview(null);
-    setCroppedForPlacement(null);
     setTemplateName("");
     if (applyTemplateId) {
       const tpl = templates.find((tp) => tp.id === applyTemplateId);
@@ -314,11 +212,13 @@ export function VoucherForm({
       ...defaults,
       template_id: tpl.id,
       artwork_path: tpl.artwork_path,
-      qr_x: Number(tpl.qr_x),
-      qr_y: Number(tpl.qr_y),
-      qr_size: Number(tpl.qr_size),
-      width_px: Number(defaults.width_px) || VOUCHER_W,
-      height_px: Number(defaults.height_px) || VOUCHER_H,
+      // Prefer the template's layout document; fall back to its legacy flat
+      // QR columns so templates saved before this feature still place the QR.
+      layout: normalizeLayout(
+        tpl.design && Object.keys(tpl.design).length
+          ? tpl.design
+          : { qr_x: tpl.qr_x, qr_y: tpl.qr_y, qr_size: tpl.qr_size },
+      ),
     }));
     setLocalArtworkPreview(tpl.artwork_path ? (artworkUrls[tpl.artwork_path] ?? null) : null);
   }
@@ -327,23 +227,27 @@ export function VoucherForm({
 
   const rewardNeedsProduct = value.reward !== "order_percent" && value.reward !== "order_fixed";
 
+  /**
+   * Artwork is uploaded exactly as chosen — no crop step, no forced aspect.
+   * The image becomes the template; the width/height boxes below are the only
+   * way to change the exported size, and 0 keeps the original pixels.
+   */
   async function handleFile(file: File) {
-    setCropFile(file);
-  }
-
-  async function handleCropped(dataUrl: string) {
-    setCropFile(null);
-    setCroppedForPlacement(dataUrl);
-  }
-
-  async function commitArtwork() {
-    if (!croppedForPlacement) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error(t("image_too_large"));
+      return;
+    }
     setUploading(true);
     try {
-      const res = await onUploadArtwork(croppedForPlacement);
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("Could not read that image."));
+        reader.readAsDataURL(file);
+      });
+      const res = await onUploadArtwork(dataUrl);
       setValue((v) => ({ ...v, artwork_path: res.path }));
-      setLocalArtworkPreview(res.url ?? croppedForPlacement);
-      setCroppedForPlacement(null);
+      setLocalArtworkPreview(res.url ?? dataUrl);
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -352,7 +256,6 @@ export function VoucherForm({
   }
 
   const previewUrl =
-    croppedForPlacement ??
     localArtworkPreview ??
     (value.artwork_path ? (artworkUrls[value.artwork_path] ?? null) : null);
 
@@ -627,14 +530,6 @@ export function VoucherForm({
                   className={inputCls}
                 />
               </Field>
-              <Field label={t("expires_at")} hint="Leave blank for no expiry.">
-                <input
-                  type="date"
-                  value={value.expires_at ? value.expires_at.slice(0, 10) : ""}
-                  onChange={(e) => setValue({ ...value, expires_at: e.target.value })}
-                  className={inputCls}
-                />
-              </Field>
             </div>
             <label className="flex items-center gap-2 text-sm font-semibold">
               <input
@@ -658,29 +553,35 @@ export function VoucherForm({
 
           <Section title={t("section_design")}>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <Field label="Voucher width (px)" hint="Controls the card's shape.">
+              <Field label={t("voucher_width")} hint={t("voucher_size_hint")}>
                 <input
                   type="number"
-                  min="200"
-                  value={value.width_px}
+                  min="0"
+                  value={value.layout.width_px}
                   onChange={(e) =>
                     setValue({
                       ...value,
-                      width_px: Math.max(200, Number(e.target.value) || VOUCHER_W),
+                      layout: {
+                        ...value.layout,
+                        width_px: Math.max(0, Math.round(Number(e.target.value) || 0)),
+                      },
                     })
                   }
                   className={inputCls}
                 />
               </Field>
-              <Field label="Voucher height (px)" hint="Controls the card's shape.">
+              <Field label={t("voucher_height")} hint={t("voucher_size_hint")}>
                 <input
                   type="number"
-                  min="120"
-                  value={value.height_px}
+                  min="0"
+                  value={value.layout.height_px}
                   onChange={(e) =>
                     setValue({
                       ...value,
-                      height_px: Math.max(120, Number(e.target.value) || VOUCHER_H),
+                      layout: {
+                        ...value.layout,
+                        height_px: Math.max(0, Math.round(Number(e.target.value) || 0)),
+                      },
                     })
                   }
                   className={inputCls}
@@ -688,26 +589,14 @@ export function VoucherForm({
               </Field>
             </div>
 
-            {previewUrl ? (
-              <div
-                className="w-full max-w-[320px] overflow-hidden rounded-2xl border border-border"
-                style={{ aspectRatio: `${value.width_px} / ${value.height_px}` }}
-              >
-                <img src={previewUrl} alt="" className="size-full object-cover" />
-              </div>
-            ) : (
-              <div className="grid h-24 place-items-center rounded-2xl border border-dashed border-border text-xs text-muted-foreground">
-                {t("token_fallback_hint")}
-              </div>
-            )}
-
             <label className="soft-press flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border border-border bg-card px-4 py-2.5 text-sm font-bold">
               <Upload className="size-4" />
-              {t("design_upload")}
+              {uploading ? t("loading") : t("design_upload")}
               <input
                 type="file"
                 accept="image/*"
                 className="hidden"
+                disabled={uploading}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
                   if (f) handleFile(f);
@@ -716,41 +605,18 @@ export function VoucherForm({
               />
             </label>
 
-            {croppedForPlacement && (
-              <div className="space-y-3 rounded-2xl border border-border bg-card p-3">
-                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                  {t("design_place_qr")}
-                </p>
-                <QrPlacer
-                  artworkUrl={croppedForPlacement}
-                  code={value.code || value.code_prefix || "SAMPLE"}
-                  qr_x={value.qr_x}
-                  qr_y={value.qr_y}
-                  qr_size={value.qr_size}
-                  aspect={aspect}
-                  onChange={(v) => setValue({ ...value, ...v })}
-                />
-                <button
-                  onClick={commitArtwork}
-                  disabled={uploading}
-                  className="soft-press w-full rounded-2xl bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground disabled:opacity-60"
-                >
-                  {uploading ? t("loading") : t("save")}
-                </button>
-              </div>
-            )}
+            <VoucherLayoutEditor
+              layout={value.layout}
+              onChange={(layout) => setValue((v) => ({ ...v, layout }))}
+              artworkUrl={previewUrl}
+              sample={{
+                code: value.code || value.code_prefix || "SAMPLE",
+                label: value.label,
+                rewardText: rewardSummary(value, currency),
+                terms: value.terms,
+              }}
+            />
 
-            {!croppedForPlacement && previewUrl && (
-              <QrPlacer
-                artworkUrl={previewUrl}
-                code={value.code || value.code_prefix || "SAMPLE"}
-                qr_x={value.qr_x}
-                qr_y={value.qr_y}
-                qr_size={value.qr_size}
-                aspect={aspect}
-                onChange={(v) => setValue({ ...value, ...v })}
-              />
-            )}
 
             <div className="flex flex-col items-stretch gap-2 rounded-2xl border border-border/70 bg-muted/20 p-3 sm:flex-row sm:items-center">
               <input
@@ -769,18 +635,6 @@ export function VoucherForm({
           </Section>
         </div>
       </Modal>
-
-      {cropFile && (
-        <ImageCropper
-          file={cropFile}
-          onCancel={() => setCropFile(null)}
-          onCropped={handleCropped}
-          aspect={aspect}
-          outputWidth={value.width_px || VOUCHER_W}
-          title={t("design_upload")}
-          hint={t("design_qr_hint")}
-        />
-      )}
 
       <ConfirmDialog
         open={!!confirmDeleteTemplate}

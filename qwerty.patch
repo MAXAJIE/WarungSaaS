@@ -1,191 +1,1624 @@
-diff --git a/src/lib/staff.server.ts b/src/lib/staff.server.ts
-index 138fdc4..23663c7 100644
---- a/src/lib/staff.server.ts
-+++ b/src/lib/staff.server.ts
-@@ -93,6 +93,26 @@ function slugify(input: string) {
-     .slice(0, 40);
+diff --git a/src/components/order-blockers.tsx b/src/components/order-blockers.tsx
+index c97eafe..5b658aa 100644
+--- a/src/components/order-blockers.tsx
++++ b/src/components/order-blockers.tsx
+@@ -24,8 +24,6 @@ export function OrderBlockers({
+     switch (b.kind) {
+       case "inactive":
+         return t("blocker_inactive");
+-      case "expired":
+-        return t("blocker_expired");
+       case "exhausted":
+         return t("blocker_exhausted");
+       case "min_spend":
+diff --git a/src/components/payment-review.tsx b/src/components/payment-review.tsx
+index c3573cf..29d81b2 100644
+--- a/src/components/payment-review.tsx
++++ b/src/components/payment-review.tsx
+@@ -177,13 +177,11 @@ export function PaymentReview({
+         toast.error(
+           r.reason === "used"
+             ? t("voucher_used")
+-            : r.reason === "expired"
+-              ? t("blocker_expired")
+-              : r.reason === "already_applied"
+-                ? t("voucher_applied")
+-                : r.reason === "not_stackable"
+-                  ? t("voucher_not_stackable")
+-                  : t("voucher_invalid"),
++            : r.reason === "already_applied"
++              ? t("voucher_applied")
++              : r.reason === "not_stackable"
++                ? t("voucher_not_stackable")
++                : t("voucher_invalid"),
+         );
+         return;
+       }
+diff --git a/src/components/voucher-canvas.ts b/src/components/voucher-canvas.ts
+index f8bb30d..bd059d2 100644
+--- a/src/components/voucher-canvas.ts
++++ b/src/components/voucher-canvas.ts
+@@ -1,23 +1,29 @@
+ /**
+  * Pure canvas rendering for vouchers. Used both to preview a design while the
+- * owner places the QR rectangle and to export PNGs for printing.
++ * owner arranges the elements and to export PNGs for printing.
+  *
+  * No React here — just canvas + the `qrcode` package — so it can run from
+  * plain click handlers without re-render churn.
++ *
++ * Every drawn part comes from the `VoucherLayout`: nothing is hardcoded, so
++ * what the owner arranges in the editor is exactly what the PNG contains.
+  */
+ import QRCode from "qrcode";
++import {
++  normalizeLayout,
++  resolveCardSize,
++  VOUCHER_H,
++  VOUCHER_W,
++  type VoucherElement,
++  type VoucherLayout,
++} from "@/lib/voucher-design";
+ 
+-export const VOUCHER_W = 1000;
+-export const VOUCHER_H = 560;
++export { VOUCHER_W, VOUCHER_H };
+ 
+ export type VoucherDesign = {
+   artworkUrl?: string | null;
+-  qr_x: number;
+-  qr_y: number;
+-  qr_size: number;
+-  /** Voucher canvas size in px; defaults to VOUCHER_W x VOUCHER_H (1000x560). */
+-  width?: number;
+-  height?: number;
++  /** Anything shaped like a layout; it is normalised before use. */
++  layout: VoucherLayout | unknown;
+ };
+ 
+ export type VoucherRenderData = {
+@@ -26,15 +32,8 @@ export type VoucherRenderData = {
+   rewardText?: string;
+   terms?: string | null;
+   expiresAt?: string | null;
+-  /**
+-   * Print the human-readable code on the ticket strip. Turn it off when the
+-   * artwork already carries the code, or when only the QR should be scannable.
+-   * The QR still encodes the code either way. Defaults to true.
+-   */
+-  showCode?: boolean;
+ };
+ 
+-
+ function loadImage(src: string): Promise<HTMLImageElement> {
+   return new Promise((resolve, reject) => {
+     const img = new Image();
+@@ -53,12 +52,13 @@ function roundRect(
+   h: number,
+   r: number,
+ ) {
++  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+   ctx.beginPath();
+-  ctx.moveTo(x + r, y);
+-  ctx.arcTo(x + w, y, x + w, y + h, r);
+-  ctx.arcTo(x + w, y + h, x, y + h, r);
+-  ctx.arcTo(x, y + h, x, y, r);
+-  ctx.arcTo(x, y, x + w, y, r);
++  ctx.moveTo(x + rr, y);
++  ctx.arcTo(x + w, y, x + w, y + h, rr);
++  ctx.arcTo(x + w, y + h, x, y + h, rr);
++  ctx.arcTo(x, y + h, x, y, rr);
++  ctx.arcTo(x, y, x + w, y, rr);
+   ctx.closePath();
  }
  
+@@ -69,22 +69,25 @@ function fallbackHue(seed: string) {
+   return h;
+ }
+ 
+-async function drawBackground(
 +/**
-+ * Every person who creates a store is that store's owner. The owner also keeps
-+ * the counter hat, because a one-person stall still has to take payment.
-+ * This is written for EVERY new store, so the site supports any number of
-+ * owners (previously only the backfilled first account ever got 'owner').
++ * Resolves the artwork once so both its pixels and its natural size are
++ * available: the natural size is what a `0` width/height box falls back to.
 + */
-+async function grantOwnerRoles(storeId: string, memberId: string, userId: string) {
-+  await supabaseAdmin
-+    .from("store_members")
-+    .update({ role: "owner" as never })
-+    .eq("id", memberId);
-+  await supabaseAdmin.from("member_roles").upsert(
-+    [
-+      { store_id: storeId, member_id: memberId, user_id: userId, role: "owner" },
-+      { store_id: storeId, member_id: memberId, user_id: userId, role: "cashier" },
-+    ] as never,
-+    { onConflict: "member_id,role" },
-+  );
++async function loadArtwork(url?: string | null): Promise<HTMLImageElement | null> {
++  if (!url) return null;
++  try {
++    return await loadImage(url);
++  } catch {
++    return null;
++  }
 +}
 +
- export async function createStoreImpl(
-   ctx: AuthedCtx,
-   data: { name: string; slug: string; tagline?: string },
-@@ -116,15 +136,20 @@ export async function createStoreImpl(
-         .select("display_name")
-         .eq("id", ctx.userId)
-         .maybeSingle();
--      await supabaseAdmin.from("store_members").upsert(
--        {
--          store_id: dupe.id,
--          user_id: ctx.userId,
--          role: "cashier",
--          display_name: profile?.display_name ?? "Owner",
--        },
--        { onConflict: "user_id" },
--      );
-+      const { data: recovered } = await supabaseAdmin
-+        .from("store_members")
-+        .upsert(
-+          {
-+            store_id: dupe.id,
-+            user_id: ctx.userId,
-+            role: "owner" as never,
-+            display_name: profile?.display_name ?? "Owner",
-+          },
-+          { onConflict: "user_id" },
-+        )
-+        .select("id")
-+        .maybeSingle();
-+      if (recovered) await grantOwnerRoles(dupe.id, recovered.id, ctx.userId);
-       return dupe;
-     }
-     throw new Error("That store link is already taken. Try another one.");
-@@ -152,12 +177,18 @@ export async function createStoreImpl(
-     .eq("id", ctx.userId)
-     .maybeSingle();
++function drawFallbackBackground(
+   ctx: CanvasRenderingContext2D,
+   w: number,
+   h: number,
+-  design: VoucherDesign,
+   seed: string,
+ ) {
+-  if (design.artworkUrl) {
+-    try {
+-      const img = await loadImage(design.artworkUrl);
+-      ctx.drawImage(img, 0, 0, w, h);
+-      return;
+-    } catch {
+-      // fall through to token fallback
+-    }
+-  }
+   const hue = fallbackHue(seed);
+   const grad = ctx.createLinearGradient(0, 0, w, h);
+   grad.addColorStop(0, `hsl(${hue} 70% 45%)`);
+@@ -105,63 +108,92 @@ async function drawBackground(
+   ctx.restore();
+ }
  
--  await supabaseAdmin.from("store_members").insert({
--    store_id: store.id,
--    user_id: ctx.userId,
--    role: "cashier",
--    display_name: profile?.display_name ?? "Owner",
--  });
-+  const { data: member, error: memberError } = await supabaseAdmin
-+    .from("store_members")
-+    .insert({
-+      store_id: store.id,
-+      user_id: ctx.userId,
-+      role: "owner" as never,
-+      display_name: profile?.display_name ?? "Owner",
-+    })
-+    .select("id")
-+    .single();
-+  if (memberError) throw new Error(memberError.message);
-+  await grantOwnerRoles(store.id, member.id, ctx.userId);
+-/** Renders one voucher into a freshly created canvas at VOUCHER_W x VOUCHER_H. */
++/** Centre-anchored text with a soft shadow so it stays legible over any artwork. */
++function drawText(
++  ctx: CanvasRenderingContext2D,
++  text: string,
++  el: VoucherElement,
++  w: number,
++  h: number,
++  weight: number,
++) {
++  const fontPx = Math.max(6, el.size * h);
++  ctx.save();
++  ctx.font = `${weight} ${fontPx}px sans-serif`;
++  ctx.textAlign = "center";
++  ctx.textBaseline = "middle";
++  ctx.shadowColor = "rgba(0,0,0,0.55)";
++  ctx.shadowBlur = fontPx * 0.35;
++  ctx.fillStyle = "#fff";
++  ctx.fillText(text, el.x * w, el.y * h, w * 0.96);
++  ctx.restore();
++}
++
++/**
++ * Renders one voucher into a freshly created canvas.
++ *
++ * Size comes from the layout: `0` on width/height means the artwork's own
++ * pixel size is used verbatim, so uploads are never cropped.
++ */
+ export async function renderVoucherCanvas(
+   data: VoucherRenderData,
+   design: VoucherDesign,
+ ): Promise<HTMLCanvasElement> {
+-  const w = Math.max(100, Math.round(design.width ?? VOUCHER_W));
+-  const h = Math.max(60, Math.round(design.height ?? VOUCHER_H));
++  const layout = normalizeLayout(design.layout);
++  const art = await loadArtwork(design.artworkUrl);
++  const natural = art ? { width: art.naturalWidth, height: art.naturalHeight } : null;
++  const { width: w, height: h } = resolveCardSize(layout, natural);
++
+   const canvas = document.createElement("canvas");
+   canvas.width = w;
+   canvas.height = h;
+   const ctx = canvas.getContext("2d");
+   if (!ctx) return canvas;
  
-   await logAction({
-     storeId: store.id,
-@@ -384,13 +415,35 @@ export async function joinWithInviteImpl(ctx: AuthedCtx, data: { code: string; r
-     .eq("id", ctx.userId)
-     .maybeSingle();
+-  await drawBackground(ctx, w, h, design, data.code);
++  if (art) ctx.drawImage(art, 0, 0, w, h);
++  else drawFallbackBackground(ctx, w, h, data.code);
  
--  const { error } = await supabaseAdmin.from("store_members").insert({
--    store_id: invite.store_id,
--    user_id: ctx.userId,
--    role: invite.role,
--    display_name: profile?.display_name ?? "Staff",
--  });
-+  const { data: joined, error } = await supabaseAdmin
-+    .from("store_members")
-+    .insert({
-+      store_id: invite.store_id,
-+      user_id: ctx.userId,
-+      role: invite.role,
-+      display_name: profile?.display_name ?? "Staff",
-+    })
-+    .select("id")
-+    .single();
-   if (error) throw new Error(error.message);
-+  if (joined) {
-+    if (invite.role === "owner") {
-+      // A store can have more than one owner; invited owners get the counter hat too.
-+      await grantOwnerRoles(invite.store_id, joined.id, ctx.userId);
-+    } else {
-+      await supabaseAdmin.from("member_roles").upsert(
-+        [
-+          {
-+            store_id: invite.store_id,
-+            member_id: joined.id,
-+            user_id: ctx.userId,
-+            role: invite.role,
-+          },
-+        ] as never,
-+        { onConflict: "member_id,role" },
-+      );
+-  // Bottom ticket strip with code + reward, so it stays legible over any artwork.
+-  const stripH = h * 0.26;
+-  ctx.fillStyle = "rgba(15,15,20,0.62)";
+-  ctx.fillRect(0, h - stripH, w, stripH);
++  const el = layout.elements;
+ 
+-  const showCode = data.showCode !== false;
+-  ctx.fillStyle = "#fff";
+-  ctx.textBaseline = "middle";
+-  if (showCode) {
+-    ctx.font = "700 40px sans-serif";
+-    ctx.fillText(data.code, 28, h - stripH / 2 - 14);
++  // Ticket strip first: it is the backdrop the text elements sit on.
++  if (el.strip.enabled) {
++    const bandH = Math.max(1, el.strip.size * h);
++    ctx.fillStyle = "rgba(15,15,20,0.62)";
++    ctx.fillRect(0, el.strip.y * h - bandH / 2, w, bandH);
+   }
+-  ctx.font = "500 20px sans-serif";
+-  ctx.globalAlpha = 0.9;
+-  const sub = [data.label, data.rewardText].filter(Boolean).join(" · ");
+-  // Without the code line the reward re-centres in the strip instead of
+-  // hanging off the bottom edge of an otherwise empty band.
+-  if (sub) ctx.fillText(sub, 28, h - stripH / 2 + (showCode ? 20 : 0));
+-  ctx.globalAlpha = 1;
+-
+-
+-  if (data.expiresAt) {
+-    ctx.font = "500 16px sans-serif";
+-    ctx.textAlign = "right";
+-    ctx.fillText(`exp. ${new Date(data.expiresAt).toLocaleDateString()}`, w - 20, h - 16);
+-    ctx.textAlign = "left";
++
++  if (el.code.enabled && data.code) drawText(ctx, data.code, el.code, w, h, 700);
++  if (el.label.enabled && data.label) drawText(ctx, data.label, el.label, w, h, 600);
++  if (el.reward.enabled && data.rewardText) drawText(ctx, data.rewardText, el.reward, w, h, 500);
++  if (el.terms.enabled && data.terms) drawText(ctx, data.terms, el.terms, w, h, 500);
++  if (el.expiry.enabled && data.expiresAt) {
++    drawText(
++      ctx,
++      `exp. ${new Date(data.expiresAt).toLocaleDateString()}`,
++      el.expiry,
++      w,
++      h,
++      500,
++    );
+   }
+ 
+-  // QR block, positioned by the fractional rectangle picked during design.
+-  const qrSize = Math.max(0.08, design.qr_size) * w;
+-  const qrX = design.qr_x * w - qrSize / 2;
+-  const qrY = design.qr_y * h - qrSize / 2;
+-  const pad = qrSize * 0.08;
+-  ctx.fillStyle = "#fff";
+-  roundRect(ctx, qrX - pad, qrY - pad, qrSize + pad * 2, qrSize + pad * 2, qrSize * 0.06);
+-  ctx.fill();
+-  try {
+-    const qrDataUrl = await QRCode.toDataURL(data.code, { margin: 0, width: 512 });
+-    const qrImg = await loadImage(qrDataUrl);
+-    ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+-  } catch {
+-    // QR generation should never throw in practice; skip silently if it does.
++  if (el.qr.enabled) {
++    const qrSize = Math.max(8, el.qr.size * w);
++    const qrX = el.qr.x * w - qrSize / 2;
++    const qrY = el.qr.y * h - qrSize / 2;
++    const pad = qrSize * 0.08;
++    ctx.fillStyle = "#fff";
++    roundRect(ctx, qrX - pad, qrY - pad, qrSize + pad * 2, qrSize + pad * 2, qrSize * 0.06);
++    ctx.fill();
++    try {
++      // Render the QR at least as dense as it will be drawn, so it stays crisp.
++      const px = Math.min(2048, Math.max(256, Math.ceil(qrSize)));
++      const qrDataUrl = await QRCode.toDataURL(data.code || "SAMPLE", { margin: 0, width: px });
++      const qrImg = await loadImage(qrDataUrl);
++      ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
++    } catch {
++      // QR generation should never throw in practice; skip silently if it does.
 +    }
-+  }
-   await supabaseAdmin
-     .from("store_invites")
-     .update({ used_by: ctx.userId, used_at: new Date().toISOString() })
-diff --git a/supabase/migrations/20260807000000_multiple_owners.sql b/supabase/migrations/20260807000000_multiple_owners.sql
+   }
+ 
+   return canvas;
+@@ -192,19 +224,24 @@ export async function downloadVoucherPng(data: VoucherRenderData, design: Vouche
+ }
+ 
+ /**
+- * Renders a whole batch onto one A4-ish printable sheet (3 columns, as many
+- * rows as needed), so the owner can print a run of vouchers in one go.
++ * Renders a whole batch onto one printable sheet (3 columns, as many rows as
++ * needed), so the owner can print a run of vouchers in one go. Every cell uses
++ * the size the first card resolved to, which keeps the grid even.
+  */
+ export async function downloadVoucherSheetPng(
+   vouchers: VoucherRenderData[],
+   design: VoucherDesign,
+   filename = "voucher-batch.png",
+ ) {
++  if (!vouchers.length) return;
+   const cols = 3;
+-  const cellW = Math.max(100, Math.round(design.width ?? VOUCHER_W));
+-  const cellH = Math.max(60, Math.round(design.height ?? VOUCHER_H));
+   const gap = 40;
+-  const rows = Math.max(1, Math.ceil(vouchers.length / cols));
++  const cells: HTMLCanvasElement[] = [];
++  for (const v of vouchers) cells.push(await renderVoucherCanvas(v, design));
++
++  const cellW = cells[0]!.width;
++  const cellH = cells[0]!.height;
++  const rows = Math.max(1, Math.ceil(cells.length / cols));
+   const sheet = document.createElement("canvas");
+   sheet.width = cols * cellW + gap * (cols + 1);
+   sheet.height = rows * cellH + gap * (rows + 1);
+@@ -213,16 +250,15 @@ export async function downloadVoucherSheetPng(
+   ctx.fillStyle = "#f4f4f2";
+   ctx.fillRect(0, 0, sheet.width, sheet.height);
+ 
+-  for (let i = 0; i < vouchers.length; i++) {
++  for (let i = 0; i < cells.length; i++) {
+     const col = i % cols;
+     const row = Math.floor(i / cols);
+     const x = gap + col * (cellW + gap);
+     const y = gap + row * (cellH + gap);
+-    const cell = await renderVoucherCanvas(vouchers[i]!, design);
+     ctx.save();
+     ctx.shadowColor = "rgba(0,0,0,0.25)";
+     ctx.shadowBlur = 12;
+-    ctx.drawImage(cell, x, y);
++    ctx.drawImage(cells[i]!, x, y, cellW, cellH);
+     ctx.restore();
+   }
+ 
+diff --git a/src/components/voucher-form.tsx b/src/components/voucher-form.tsx
+index 296a221..4544cd6 100644
+--- a/src/components/voucher-form.tsx
++++ b/src/components/voucher-form.tsx
+@@ -2,11 +2,10 @@ import { useEffect, useMemo, useState } from "react";
+ import { toast } from "sonner";
+ import { Save, Trash2, Upload } from "lucide-react";
+ import { Modal, ConfirmDialog } from "@/components/modal";
+-import { ImageCropper } from "@/components/image-cropper";
+ import { useI18n } from "@/lib/i18n";
+-import type { VoucherReward } from "@/lib/vouchers";
+-import { VOUCHER_W, VOUCHER_H } from "@/components/voucher-canvas";
+-import QRCode from "qrcode";
++import { rewardSummary, type VoucherReward } from "@/lib/vouchers";
++import { VoucherLayoutEditor } from "@/components/voucher-layout-editor";
++import { DEFAULT_LAYOUT, normalizeLayout, type VoucherLayout } from "@/lib/voucher-design";
+ 
+ export type PromoProduct = {
+   id: string;
+@@ -23,6 +22,7 @@ export type VoucherTemplateRow = {
+   qr_y: number | string;
+   qr_size: number | string;
+   defaults: Record<string, unknown> | null;
++  design?: Record<string, unknown> | null;
+ };
+ 
+ export type VoucherFormValue = {
+@@ -45,16 +45,13 @@ export type VoucherFormValue = {
+   required_qty: number;
+   usage_limit: number;
+   terms: string;
+-  expires_at: string;
+   template_id: string | null;
+   artwork_path: string | null;
+-  qr_x: number;
+-  qr_y: number;
+-  qr_size: number;
+-  /** Voucher card dimensions in px, used only to shape the artwork crop and
+-   * QR placement preview — the export always renders at this aspect. */
+-  width_px: number;
+-  height_px: number;
++  /**
++   * Full layout document: which elements print, where they sit and how big
++   * they are, plus the export size (0 = keep the artwork's own pixels).
++   */
++  layout: VoucherLayout;
+   is_active: boolean;
+ };
+ 
+@@ -86,14 +83,9 @@ function blank(): VoucherFormValue {
+     required_qty: 1,
+     usage_limit: 1,
+     terms: "",
+-    expires_at: "",
+     template_id: null,
+     artwork_path: null,
+-    qr_x: 0.78,
+-    qr_y: 0.5,
+-    qr_size: 0.32,
+-    width_px: VOUCHER_W,
+-    height_px: VOUCHER_H,
++    layout: structuredClone(DEFAULT_LAYOUT),
+     is_active: true,
+   };
+ }
+@@ -159,99 +151,6 @@ function ProductPicker({
+   );
+ }
+ 
+-/**
+- * Drag-and-resize placement of the QR rectangle over the cropped artwork. A
+- * real sample QR code is rendered inside the frame (not a plain box) so the
+- * preview matches the exported PNG pixel-for-pixel: same aspect, same
+- * fractional position, same relative size.
+- */
+-function QrPlacer({
+-  artworkUrl,
+-  code,
+-  qr_x,
+-  qr_y,
+-  qr_size,
+-  aspect,
+-  onChange,
+-}: {
+-  artworkUrl: string;
+-  code: string;
+-  qr_x: number;
+-  qr_y: number;
+-  qr_size: number;
+-  aspect: number;
+-  onChange: (v: { qr_x: number; qr_y: number; qr_size: number }) => void;
+-}) {
+-  const { t } = useI18n();
+-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+-  const FRAME_W = 320;
+-  const FRAME_H = Math.round(FRAME_W / aspect);
+-
+-  useEffect(() => {
+-    let cancelled = false;
+-    QRCode.toDataURL(code || "SAMPLE", { margin: 0, width: 256 })
+-      .then((url) => !cancelled && setQrDataUrl(url))
+-      .catch(() => {});
+-    return () => {
+-      cancelled = true;
+-    };
+-  }, [code]);
+-
+-  return (
+-    <div className="flex w-full flex-col items-center gap-3">
+-      <div
+-        className="relative w-full max-w-[320px] overflow-hidden rounded-2xl border border-border bg-muted"
+-        style={{ aspectRatio: `${FRAME_W} / ${FRAME_H}`, touchAction: "none" }}
+-        onPointerDown={(e) => {
+-          const rect = e.currentTarget.getBoundingClientRect();
+-          const move = (ev: PointerEvent) => {
+-            const x = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
+-            const y = Math.min(1, Math.max(0, (ev.clientY - rect.top) / rect.height));
+-            onChange({ qr_x: x, qr_y: y, qr_size });
+-          };
+-          move(e.nativeEvent);
+-          const up = () => {
+-            window.removeEventListener("pointermove", move);
+-            window.removeEventListener("pointerup", up);
+-          };
+-          window.addEventListener("pointermove", move);
+-          window.addEventListener("pointerup", up);
+-        }}
+-      >
+-        <img
+-          src={artworkUrl}
+-          alt=""
+-          className="pointer-events-none absolute inset-0 size-full object-cover"
+-        />
+-        <div
+-          className="pointer-events-none absolute rounded-lg border-2 border-primary bg-card/90 p-[3%] shadow-lift"
+-          style={{
+-            width: `${qr_size * 100}%`,
+-            height: `${qr_size * aspect * (FRAME_H / FRAME_W) * 100}%`,
+-            left: `${qr_x * 100 - (qr_size * 100) / 2}%`,
+-            top: `${qr_y * 100 - (qr_size * (FRAME_W / FRAME_H) * 100) / 2}%`,
+-          }}
+-        >
+-          {qrDataUrl && <img src={qrDataUrl} alt="" className="size-full object-contain" />}
+-        </div>
+-      </div>
+-      <label className="flex w-full items-center gap-3 text-xs font-semibold text-muted-foreground">
+-        {t("qr_size")}
+-        <input
+-          type="range"
+-          min={0.12}
+-          max={0.6}
+-          step={0.01}
+-          value={qr_size}
+-          onChange={(e) => onChange({ qr_x, qr_y, qr_size: Number(e.target.value) })}
+-          className="flex-1"
+-        />
+-      </label>
+-      <p className="text-xs text-muted-foreground">{t("design_qr_hint")}</p>
+-    </div>
+-  );
+-}
+-
+ export function VoucherForm({
+   open,
+   onClose,
+@@ -264,6 +163,7 @@ export function VoucherForm({
+   onDeleteTemplate,
+   onUploadArtwork,
+   artworkUrls,
++  currency,
+   submitting,
+ }: {
+   open: boolean;
+@@ -277,13 +177,13 @@ export function VoucherForm({
+   onDeleteTemplate: (id: string) => Promise<unknown>;
+   onUploadArtwork: (dataUrl: string) => Promise<{ path: string; url: string | null }>;
+   artworkUrls: Record<string, string>;
++  /** Store currency, used only to word the sample reward line in the preview. */
++  currency?: string;
+   submitting?: boolean;
+ }) {
+   const { t } = useI18n();
+   const [value, setValue] = useState<VoucherFormValue>(blank());
+   const [localArtworkPreview, setLocalArtworkPreview] = useState<string | null>(null);
+-  const [cropFile, setCropFile] = useState<File | null>(null);
+-  const [croppedForPlacement, setCroppedForPlacement] = useState<string | null>(null);
+   const [uploading, setUploading] = useState(false);
+   const [templateName, setTemplateName] = useState("");
+   const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState<VoucherTemplateRow | null>(
+@@ -291,14 +191,12 @@ export function VoucherForm({
+   );
+   const isEdit = !!value.id;
+   const isBatchCreate = !isEdit && value.quantity > 1;
+-  const aspect =
+-    Math.max(0.2, value.width_px || VOUCHER_W) / Math.max(0.2, value.height_px || VOUCHER_H);
+ 
+   useEffect(() => {
+     if (!open) return;
+-    setValue({ ...blank(), ...(initial ?? {}) });
++    const seed = { ...blank(), ...(initial ?? {}) };
++    setValue({ ...seed, layout: normalizeLayout(seed.layout) });
+     setLocalArtworkPreview(null);
+-    setCroppedForPlacement(null);
+     setTemplateName("");
+     if (applyTemplateId) {
+       const tpl = templates.find((tp) => tp.id === applyTemplateId);
+@@ -314,11 +212,13 @@ export function VoucherForm({
+       ...defaults,
+       template_id: tpl.id,
+       artwork_path: tpl.artwork_path,
+-      qr_x: Number(tpl.qr_x),
+-      qr_y: Number(tpl.qr_y),
+-      qr_size: Number(tpl.qr_size),
+-      width_px: Number(defaults.width_px) || VOUCHER_W,
+-      height_px: Number(defaults.height_px) || VOUCHER_H,
++      // Prefer the template's layout document; fall back to its legacy flat
++      // QR columns so templates saved before this feature still place the QR.
++      layout: normalizeLayout(
++        tpl.design && Object.keys(tpl.design).length
++          ? tpl.design
++          : { qr_x: tpl.qr_x, qr_y: tpl.qr_y, qr_size: tpl.qr_size },
++      ),
+     }));
+     setLocalArtworkPreview(tpl.artwork_path ? (artworkUrls[tpl.artwork_path] ?? null) : null);
+   }
+@@ -327,23 +227,27 @@ export function VoucherForm({
+ 
+   const rewardNeedsProduct = value.reward !== "order_percent" && value.reward !== "order_fixed";
+ 
++  /**
++   * Artwork is uploaded exactly as chosen — no crop step, no forced aspect.
++   * The image becomes the template; the width/height boxes below are the only
++   * way to change the exported size, and 0 keeps the original pixels.
++   */
+   async function handleFile(file: File) {
+-    setCropFile(file);
+-  }
+-
+-  async function handleCropped(dataUrl: string) {
+-    setCropFile(null);
+-    setCroppedForPlacement(dataUrl);
+-  }
+-
+-  async function commitArtwork() {
+-    if (!croppedForPlacement) return;
++    if (file.size > 5 * 1024 * 1024) {
++      toast.error(t("image_too_large"));
++      return;
++    }
+     setUploading(true);
+     try {
+-      const res = await onUploadArtwork(croppedForPlacement);
++      const dataUrl = await new Promise<string>((resolve, reject) => {
++        const reader = new FileReader();
++        reader.onload = () => resolve(String(reader.result));
++        reader.onerror = () => reject(new Error("Could not read that image."));
++        reader.readAsDataURL(file);
++      });
++      const res = await onUploadArtwork(dataUrl);
+       setValue((v) => ({ ...v, artwork_path: res.path }));
+-      setLocalArtworkPreview(res.url ?? croppedForPlacement);
+-      setCroppedForPlacement(null);
++      setLocalArtworkPreview(res.url ?? dataUrl);
+     } catch (e) {
+       toast.error((e as Error).message);
+     } finally {
+@@ -352,7 +256,6 @@ export function VoucherForm({
+   }
+ 
+   const previewUrl =
+-    croppedForPlacement ??
+     localArtworkPreview ??
+     (value.artwork_path ? (artworkUrls[value.artwork_path] ?? null) : null);
+ 
+@@ -627,14 +530,6 @@ export function VoucherForm({
+                   className={inputCls}
+                 />
+               </Field>
+-              <Field label={t("expires_at")} hint="Leave blank for no expiry.">
+-                <input
+-                  type="date"
+-                  value={value.expires_at ? value.expires_at.slice(0, 10) : ""}
+-                  onChange={(e) => setValue({ ...value, expires_at: e.target.value })}
+-                  className={inputCls}
+-                />
+-              </Field>
+             </div>
+             <label className="flex items-center gap-2 text-sm font-semibold">
+               <input
+@@ -658,29 +553,35 @@ export function VoucherForm({
+ 
+           <Section title={t("section_design")}>
+             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+-              <Field label="Voucher width (px)" hint="Controls the card's shape.">
++              <Field label={t("voucher_width")} hint={t("voucher_size_hint")}>
+                 <input
+                   type="number"
+-                  min="200"
+-                  value={value.width_px}
++                  min="0"
++                  value={value.layout.width_px}
+                   onChange={(e) =>
+                     setValue({
+                       ...value,
+-                      width_px: Math.max(200, Number(e.target.value) || VOUCHER_W),
++                      layout: {
++                        ...value.layout,
++                        width_px: Math.max(0, Math.round(Number(e.target.value) || 0)),
++                      },
+                     })
+                   }
+                   className={inputCls}
+                 />
+               </Field>
+-              <Field label="Voucher height (px)" hint="Controls the card's shape.">
++              <Field label={t("voucher_height")} hint={t("voucher_size_hint")}>
+                 <input
+                   type="number"
+-                  min="120"
+-                  value={value.height_px}
++                  min="0"
++                  value={value.layout.height_px}
+                   onChange={(e) =>
+                     setValue({
+                       ...value,
+-                      height_px: Math.max(120, Number(e.target.value) || VOUCHER_H),
++                      layout: {
++                        ...value.layout,
++                        height_px: Math.max(0, Math.round(Number(e.target.value) || 0)),
++                      },
+                     })
+                   }
+                   className={inputCls}
+@@ -688,26 +589,14 @@ export function VoucherForm({
+               </Field>
+             </div>
+ 
+-            {previewUrl ? (
+-              <div
+-                className="w-full max-w-[320px] overflow-hidden rounded-2xl border border-border"
+-                style={{ aspectRatio: `${value.width_px} / ${value.height_px}` }}
+-              >
+-                <img src={previewUrl} alt="" className="size-full object-cover" />
+-              </div>
+-            ) : (
+-              <div className="grid h-24 place-items-center rounded-2xl border border-dashed border-border text-xs text-muted-foreground">
+-                {t("token_fallback_hint")}
+-              </div>
+-            )}
+-
+             <label className="soft-press flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border border-border bg-card px-4 py-2.5 text-sm font-bold">
+               <Upload className="size-4" />
+-              {t("design_upload")}
++              {uploading ? t("loading") : t("design_upload")}
+               <input
+                 type="file"
+                 accept="image/*"
+                 className="hidden"
++                disabled={uploading}
+                 onChange={(e) => {
+                   const f = e.target.files?.[0];
+                   if (f) handleFile(f);
+@@ -716,41 +605,18 @@ export function VoucherForm({
+               />
+             </label>
+ 
+-            {croppedForPlacement && (
+-              <div className="space-y-3 rounded-2xl border border-border bg-card p-3">
+-                <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+-                  {t("design_place_qr")}
+-                </p>
+-                <QrPlacer
+-                  artworkUrl={croppedForPlacement}
+-                  code={value.code || value.code_prefix || "SAMPLE"}
+-                  qr_x={value.qr_x}
+-                  qr_y={value.qr_y}
+-                  qr_size={value.qr_size}
+-                  aspect={aspect}
+-                  onChange={(v) => setValue({ ...value, ...v })}
+-                />
+-                <button
+-                  onClick={commitArtwork}
+-                  disabled={uploading}
+-                  className="soft-press w-full rounded-2xl bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground disabled:opacity-60"
+-                >
+-                  {uploading ? t("loading") : t("save")}
+-                </button>
+-              </div>
+-            )}
++            <VoucherLayoutEditor
++              layout={value.layout}
++              onChange={(layout) => setValue((v) => ({ ...v, layout }))}
++              artworkUrl={previewUrl}
++              sample={{
++                code: value.code || value.code_prefix || "SAMPLE",
++                label: value.label,
++                rewardText: rewardSummary(value, currency),
++                terms: value.terms,
++              }}
++            />
+ 
+-            {!croppedForPlacement && previewUrl && (
+-              <QrPlacer
+-                artworkUrl={previewUrl}
+-                code={value.code || value.code_prefix || "SAMPLE"}
+-                qr_x={value.qr_x}
+-                qr_y={value.qr_y}
+-                qr_size={value.qr_size}
+-                aspect={aspect}
+-                onChange={(v) => setValue({ ...value, ...v })}
+-              />
+-            )}
+ 
+             <div className="flex flex-col items-stretch gap-2 rounded-2xl border border-border/70 bg-muted/20 p-3 sm:flex-row sm:items-center">
+               <input
+@@ -770,18 +636,6 @@ export function VoucherForm({
+         </div>
+       </Modal>
+ 
+-      {cropFile && (
+-        <ImageCropper
+-          file={cropFile}
+-          onCancel={() => setCropFile(null)}
+-          onCropped={handleCropped}
+-          aspect={aspect}
+-          outputWidth={value.width_px || VOUCHER_W}
+-          title={t("design_upload")}
+-          hint={t("design_qr_hint")}
+-        />
+-      )}
+-
+       <ConfirmDialog
+         open={!!confirmDeleteTemplate}
+         onClose={() => setConfirmDeleteTemplate(null)}
+diff --git a/src/lib/i18n.tsx b/src/lib/i18n.tsx
+index ea07cf6..1c13140 100644
+--- a/src/lib/i18n.tsx
++++ b/src/lib/i18n.tsx
+@@ -509,6 +509,24 @@ const en: Dict = {
+   welcome_place_order_sub: "Browse the menu and build your ticket.",
+   welcome_order_detail: "Order detail",
+   welcome_order_detail_sub: "Track an order you already placed.",
++  // Voucher layout editor.
++  section_layout: "Voucher layout",
++  vstep_qr: "1. QR spot",
++  vstep_code: "2. Code spot",
++  vstep_all: "3. Everything else",
++  vel_strip: "Ticket strip",
++  vel_qr: "QR code",
++  vel_code: "Promo code",
++  vel_label: "Voucher name",
++  vel_reward: "Reward text",
++  vel_terms: "Terms line",
++  vel_expiry: "Expiry line",
++  design_drag_hint: "Drag a box on the voucher to move it. Sizes come from the boxes below.",
++  confirm_qr_spot: "QR is where I want it",
++  confirm_code_spot: "Promo code is where I want it",
++  voucher_width: "Width (px)",
++  voucher_height: "Height (px)",
++  voucher_size_hint: "0 = keep the artwork's own size. Nothing is ever cropped.",
+ };
+ 
+ const zh: Dict = {
+@@ -965,6 +983,24 @@ const zh: Dict = {
+   welcome_place_order_sub: "浏览菜单并建立你的订单。",
+   welcome_order_detail: "订单详情",
+   welcome_order_detail_sub: "查询你已提交的订单。",
++  // Voucher layout editor.
++  section_layout: "优惠券版面",
++  vstep_qr: "1. 二维码位置",
++  vstep_code: "2. 代码位置",
++  vstep_all: "3. 其他元素",
++  vel_strip: "底部色带",
++  vel_qr: "二维码",
++  vel_code: "优惠代码",
++  vel_label: "优惠券名称",
++  vel_reward: "奖励说明",
++  vel_terms: "条款文字",
++  vel_expiry: "有效期文字",
++  design_drag_hint: "在优惠券上拖动方框即可移动。大小请用下方的输入框调整。",
++  confirm_qr_spot: "二维码位置就这样",
++  confirm_code_spot: "优惠代码位置就这样",
++  voucher_width: "宽度（像素）",
++  voucher_height: "高度（像素）",
++  voucher_size_hint: "0 = 保留图案原本尺寸，绝不裁剪。",
+ };
+ 
+ const ms: Dict = {
+@@ -1427,6 +1463,24 @@ const ms: Dict = {
+   welcome_place_order_sub: "Lihat menu dan bina tiket anda.",
+   welcome_order_detail: "Butiran pesanan",
+   welcome_order_detail_sub: "Jejak pesanan yang telah anda buat.",
++  // Voucher layout editor.
++  section_layout: "Susun atur baucar",
++  vstep_qr: "1. Tempat QR",
++  vstep_code: "2. Tempat kod",
++  vstep_all: "3. Yang lain",
++  vel_strip: "Jalur tiket",
++  vel_qr: "Kod QR",
++  vel_code: "Kod promosi",
++  vel_label: "Nama baucar",
++  vel_reward: "Teks ganjaran",
++  vel_terms: "Baris terma",
++  vel_expiry: "Baris tamat tempoh",
++  design_drag_hint: "Seret kotak pada baucar untuk gerakkannya. Saiz diambil dari kotak di bawah.",
++  confirm_qr_spot: "QR sudah di tempatnya",
++  confirm_code_spot: "Kod promosi sudah di tempatnya",
++  voucher_width: "Lebar (px)",
++  voucher_height: "Tinggi (px)",
++  voucher_size_hint: "0 = kekalkan saiz asal reka bentuk. Tiada pemotongan.",
+ };
+ 
+ const DICTS: Record<Lang, Dict> = { en, zh, ms };
+diff --git a/src/lib/orders.server.ts b/src/lib/orders.server.ts
+index e6ea282..4a35f0a 100644
+--- a/src/lib/orders.server.ts
++++ b/src/lib/orders.server.ts
+@@ -287,8 +287,8 @@ export async function applyVoucherImpl(ctx: AuthedCtx, data: { orderId: string;
+   );
+   if (rule.usage_limit > 0 && rule.used_count >= rule.usage_limit)
+     return { ok: false, reason: "used" as const };
+-  if (rule.expires_at && new Date(rule.expires_at).getTime() < Date.now())
+-    return { ok: false, reason: "expired" as const };
++  // Vouchers do not expire. A freshly minted code is always applicable as far
++  // as the calendar is concerned; only its terms and usage cap can hold it back.
+ 
+   const attached = await orderVouchers(order.id);
+   if (attached.some((v) => v.id === rule.id))
+diff --git a/src/lib/staff.server.ts b/src/lib/staff.server.ts
+index 23663c7..8c475e6 100644
+--- a/src/lib/staff.server.ts
++++ b/src/lib/staff.server.ts
+@@ -917,9 +917,10 @@ export type VoucherInput = {
+   required_qty?: number;
+   usage_limit?: number;
+   terms?: string;
+-  expires_at?: string | null;
+   template_id?: string | null;
+   artwork_path?: string | null;
++  /** Layout document: element toggles, positions, sizes and canvas size. */
++  design?: Record<string, unknown> | null;
+   is_active?: boolean;
+ };
+ 
+@@ -950,9 +951,10 @@ export async function upsertVoucherImpl(ctx: AuthedCtx, data: VoucherInput) {
+     required_qty: Math.max(1, Number(data.required_qty ?? 1)),
+     usage_limit: Math.max(0, Number(data.usage_limit ?? 1)),
+     terms: (data.terms ?? "").slice(0, 500),
+-    expires_at: data.expires_at ?? null,
+     template_id: data.template_id ?? null,
+     artwork_path: data.artwork_path ?? null,
++    // Layout is stored verbatim; the client normalises it before rendering.
++    design: data.design ?? {},
+     is_active: data.is_active ?? true,
+   };
+ 
+@@ -1017,6 +1019,7 @@ export type VoucherTemplateInput = {
+   qr_y?: number;
+   qr_size?: number;
+   defaults?: Record<string, unknown>;
++  design?: Record<string, unknown> | null;
+ };
+ 
+ export async function upsertVoucherTemplateImpl(ctx: AuthedCtx, data: VoucherTemplateInput) {
+@@ -1029,6 +1032,7 @@ export async function upsertVoucherTemplateImpl(ctx: AuthedCtx, data: VoucherTem
+     qr_y: clamp01(data.qr_y ?? 0.62),
+     qr_size: clamp01(data.qr_size ?? 0.22),
+     defaults: data.defaults ?? {},
++    design: data.design ?? {},
+   };
+   const query = data.id
+     ? looseDb()
+diff --git a/src/lib/vouchers.ts b/src/lib/vouchers.ts
+index a80e188..7304188 100644
+--- a/src/lib/vouchers.ts
++++ b/src/lib/vouchers.ts
+@@ -32,7 +32,6 @@ export type VoucherRule = {
+   required_qty: number;
+   usage_limit: number;
+   used_count: number;
+-  expires_at: string | null;
+   is_active: boolean;
+   terms: string;
+ };
+@@ -45,7 +44,6 @@ export type OrderLine = {
+ 
+ export type Blocker =
+   | { kind: "inactive" }
+-  | { kind: "expired" }
+   | { kind: "exhausted" }
+   | { kind: "min_spend"; need: number; have: number }
+   | { kind: "min_items"; need: number; have: number }
+@@ -79,7 +77,8 @@ export function voucherBlockers(v: VoucherRule, lines: OrderLine[]): Blocker[] {
+   const itemCount = lines.reduce((s, l) => s + l.qty, 0);
+ 
+   if (!v.is_active) out.push({ kind: "inactive" });
+-  if (v.expires_at && new Date(v.expires_at).getTime() < Date.now()) out.push({ kind: "expired" });
++  // Vouchers never expire: a code is only ever held back by its own terms,
++  // its usage cap, or being switched off.
+   if (v.usage_limit > 0 && v.used_count >= v.usage_limit) out.push({ kind: "exhausted" });
+   if (v.min_spend > 0 && subtotal < v.min_spend)
+     out.push({ kind: "min_spend", need: v.min_spend, have: money(subtotal) });
+diff --git a/src/lib/warung.server.ts b/src/lib/warung.server.ts
+index 400035c..131ffd3 100644
+--- a/src/lib/warung.server.ts
++++ b/src/lib/warung.server.ts
+@@ -210,7 +210,6 @@ export function toRule(row: VoucherRow): VoucherRule {
+     required_qty: num("required_qty", 1),
+     usage_limit: num("usage_limit", 1),
+     used_count: num("used_count"),
+-    expires_at: (row["expires_at"] as string | null) ?? null,
+     is_active: row["is_active"] !== false,
+     terms: String(row["terms"] ?? ""),
+   };
+diff --git a/src/routes/_authenticated/promos.tsx b/src/routes/_authenticated/promos.tsx
+index 68bfc5c..03881a0 100644
+--- a/src/routes/_authenticated/promos.tsx
++++ b/src/routes/_authenticated/promos.tsx
+@@ -12,6 +12,7 @@ import { useI18n } from "@/lib/i18n";
+ import { formatMoney } from "@/lib/money";
+ import { rewardSummary, type VoucherReward } from "@/lib/vouchers";
+ import { downloadVoucherPng, downloadVoucherSheetPng } from "@/components/voucher-canvas";
++import { normalizeLayout } from "@/lib/voucher-design";
+ import {
+   VoucherForm,
+   type PromoProduct,
+@@ -32,7 +33,6 @@ import {
+ } from "@/lib/staff.functions";
+ 
+ /** localStorage key for the export-time "print the code" toggle. */
+-const SHOW_CODE_KEY = "warung.voucher.showCode";
+ 
+ 
+ 
+@@ -58,7 +58,8 @@ type Voucher = {
+   qr_x: number | string;
+   qr_y: number | string;
+   qr_size: number | string;
+-  expires_at: string | null;
++  /** Layout document; empty on rows created before the layout editor. */
++  design: Record<string, unknown> | null;
+   terms: string;
+ };
+ type GiftRow = {
+@@ -155,7 +156,9 @@ function PromosPage() {
+       saveV({
+         data: {
+           ...value,
+-          expires_at: value.expires_at || null,
++          // The layout document carries every placement, toggle and the export
++          // size; the server stores it verbatim on the voucher row.
++          design: value.layout as unknown as Record<string, unknown>,
+         },
+       }),
+     onSuccess: (res: { vouchers: Voucher[] }) => {
+@@ -180,45 +183,23 @@ function PromosPage() {
+   });
+ 
+   /**
+-   * Owner-controlled switch for what the customer sees on the exported voucher.
+-   * The QR always encodes the code; this only decides whether the code is also
+-   * printed as text. Kept in localStorage so the choice survives a reload
+-   * without touching the vouchers table.
+-   */
+-  const [showCode, setShowCode] = useState<boolean>(() => {
+-    if (typeof window === "undefined") return true;
+-    return window.localStorage.getItem(SHOW_CODE_KEY) !== "0";
+-  });
+-  useEffect(() => {
+-    window.localStorage.setItem(SHOW_CODE_KEY, showCode ? "1" : "0");
+-  }, [showCode]);
+-
+-  /**
+-
+-   * Exported PNGs must match what the owner saw in the placement preview, so the
+-   * canvas size travels with the artwork: whichever saved design uses the same
+-   * artwork also carries the width/height the owner typed in.
++   * Exported PNGs must match what the owner saw in the editor, so the whole
++   * layout document travels with the voucher row. Rows minted before the editor
++   * existed fall back to their legacy flat QR columns.
+    */
+   function designFor(v: Voucher) {
+-    const tpl = (data?.templates ?? []).find(
+-      (tp) => v.artwork_path && tp.artwork_path === v.artwork_path,
+-    );
+-    const d = (tpl?.defaults ?? {}) as { width_px?: number; height_px?: number };
+-    const w = Number(d.width_px) || 0;
+-    const h = Number(d.height_px) || 0;
++    const stored = v.design && Object.keys(v.design).length ? v.design : null;
+     return {
+       artworkUrl: v.artwork_path ? (artworkUrls[v.artwork_path] ?? null) : null,
+-      qr_x: Number(v.qr_x) || 0.78,
+-      qr_y: Number(v.qr_y) || 0.5,
+-      qr_size: Number(v.qr_size) || 0.32,
+-      ...(w > 0 ? { width: w } : {}),
+-      ...(h > 0 ? { height: h } : {}),
++      layout: normalizeLayout(
++        stored ?? { qr_x: v.qr_x, qr_y: v.qr_y, qr_size: v.qr_size },
++      ),
+     };
+   }
+ 
+   function exportOne(v: Voucher) {
+     downloadVoucherPng(
+-      { code: v.code, label: v.label, rewardText: rewardSummary(v, "RM"), showCode },
++      { code: v.code, label: v.label, rewardText: rewardSummary(v, "RM"), terms: v.terms },
+       designFor(v),
+     ).catch((e: Error) => toast.error(e.message));
+   }
+@@ -229,7 +210,7 @@ function PromosPage() {
+         code: v.code,
+         label: v.label,
+         rewardText: rewardSummary(v, "RM"),
+-        showCode,
++        terms: v.terms,
+       })),
+       designFor(vs[0]!),
+     ).catch((e: Error) => toast.error(e.message));
+@@ -263,17 +244,6 @@ function PromosPage() {
+           />
+         </div>
+         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+-          {/* Owner picks what the customer sees on the downloaded voucher. */}
+-          <label className="inline-flex min-w-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-xs font-semibold shadow-cozy">
+-            <input
+-              type="checkbox"
+-              checked={showCode}
+-              onChange={(e) => setShowCode(e.target.checked)}
+-              className="size-4 shrink-0 accent-[var(--color-primary)]"
+-            />
+-            <span className="truncate">{t("voucher_show_code")}</span>
+-          </label>
+-
+           <details className="group relative shrink-0">
+             <summary className="soft-press inline-flex cursor-pointer list-none items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground shadow-lift">
+               <Plus className="size-4" /> {t("new_promo")}
+@@ -473,9 +443,12 @@ function PromosPage() {
+             data: {
+               name,
+               artwork_path: value.artwork_path,
+-              qr_x: value.qr_x,
+-              qr_y: value.qr_y,
+-              qr_size: value.qr_size,
++              qr_x: value.layout.elements.qr.x,
++              qr_y: value.layout.elements.qr.y,
++              qr_size: value.layout.elements.qr.size,
++              // The full layout, so reopening the template restores every
++              // toggle and placement exactly as it was saved.
++              design: value.layout as unknown as Record<string, unknown>,
+               defaults: {
+                 reward: value.reward,
+                 value: value.value,
+@@ -491,10 +464,6 @@ function PromosPage() {
+                 required_qty: value.required_qty,
+                 usage_limit: value.usage_limit,
+                 terms: value.terms,
+-                // Canvas size travels with the design so a reopened template
+-                // restores the exact shape the owner drew the QR on.
+-                width_px: value.width_px,
+-                height_px: value.height_px,
+               },
+             },
+           }).then(invalidate)
+@@ -502,6 +471,7 @@ function PromosPage() {
+         onDeleteTemplate={(id) => delTpl({ data: { id } }).then(invalidate)}
+         onUploadArtwork={(dataUrl) => uploadArt({ data: { dataUrl } })}
+         artworkUrls={artworkUrls}
++        currency="RM"
+       />
+ 
+       <GiftForm
+diff --git a/src/lib/voucher-design.ts b/src/lib/voucher-design.ts
 new file mode 100644
-index 0000000..4646179
+index 0000000..6038098
 --- /dev/null
-+++ b/supabase/migrations/20260807000000_multiple_owners.sql
-@@ -0,0 +1,57 @@
-+-- Multiple owners: every account that creates a store becomes that store's
-+-- owner, and a store may have more than one owner.
++++ b/src/lib/voucher-design.ts
+@@ -0,0 +1,166 @@
++/**
++ * Voucher layout model.
++ *
++ * Every printable part of a voucher — the QR, the promo code text, the label,
++ * the reward sentence, the terms line and the dark ticket strip — is one
++ * element with its own on/off switch, centre position and size. Positions and
++ * sizes are stored as 0..1 fractions of the card, so the same layout renders
++ * identically at any export resolution.
++ *
++ * Pure module: no React, no canvas, no DOM. It is imported by the renderer,
++ * the editor and the server, so it must stay dependency-free.
++ */
++
++export type VoucherElementId = "strip" | "qr" | "code" | "label" | "reward" | "terms" | "expiry";
++
++/** Order used by the editor's element list and by the renderer (back to front). */
++export const VOUCHER_ELEMENT_IDS: VoucherElementId[] = [
++  "strip",
++  "qr",
++  "code",
++  "label",
++  "reward",
++  "terms",
++  "expiry",
++];
++
++export type VoucherElement = {
++  /** Unticked elements are not drawn at all. */
++  enabled: boolean;
++  /** Centre of the element, as a 0..1 fraction of card width / height. */
++  x: number;
++  y: number;
++  /**
++   * `qr`    — width as a fraction of card width.
++   * `strip` — band height as a fraction of card height.
++   * text    — font size as a fraction of card height.
++   */
++  size: number;
++};
++
++export type VoucherLayout = {
++  /**
++   * Export size in px. **0 means "do not override"**: the artwork's own pixel
++   * size is used, so uploaded images are never cropped or squashed. Setting
++   * only one of the two derives the other from the artwork's aspect ratio.
++   */
++  width_px: number;
++  height_px: number;
++  elements: Record<VoucherElementId, VoucherElement>;
++};
++
++/** Fallback card size when there is no artwork to take the size from. */
++export const VOUCHER_W = 1000;
++export const VOUCHER_H = 560;
++
++/** Size bounds per element kind, used by both the editor inputs and the renderer. */
++export const ELEMENT_SIZE_RANGE: Record<VoucherElementId, { min: number; max: number }> = {
++  strip: { min: 0.04, max: 1 },
++  qr: { min: 0.03, max: 0.95 },
++  code: { min: 0.01, max: 0.4 },
++  label: { min: 0.01, max: 0.4 },
++  reward: { min: 0.01, max: 0.4 },
++  terms: { min: 0.01, max: 0.4 },
++  expiry: { min: 0.01, max: 0.4 },
++};
++
++export const DEFAULT_LAYOUT: VoucherLayout = {
++  width_px: 0,
++  height_px: 0,
++  elements: {
++    strip: { enabled: true, x: 0.5, y: 0.87, size: 0.26 },
++    qr: { enabled: true, x: 0.78, y: 0.5, size: 0.32 },
++    code: { enabled: true, x: 0.28, y: 0.82, size: 0.072 },
++    label: { enabled: true, x: 0.28, y: 0.9, size: 0.04 },
++    reward: { enabled: true, x: 0.28, y: 0.955, size: 0.036 },
++    terms: { enabled: false, x: 0.5, y: 0.07, size: 0.03 },
++    expiry: { enabled: false, x: 0.85, y: 0.965, size: 0.028 },
++  },
++};
++
++const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
++
++function num(raw: unknown, fallback: number): number {
++  const n = typeof raw === "string" ? Number(raw) : raw;
++  return typeof n === "number" && Number.isFinite(n) ? n : fallback;
++}
++
++function normalizeElement(id: VoucherElementId, raw: unknown): VoucherElement {
++  const base = DEFAULT_LAYOUT.elements[id];
++  const src = (raw ?? {}) as Partial<Record<keyof VoucherElement, unknown>>;
++  const range = ELEMENT_SIZE_RANGE[id];
++  return {
++    enabled: typeof src.enabled === "boolean" ? src.enabled : base.enabled,
++    x: clamp(num(src.x, base.x), 0, 1),
++    y: clamp(num(src.y, base.y), 0, 1),
++    size: clamp(num(src.size, base.size), range.min, range.max),
++  };
++}
++
++/**
++ * Coerces anything stored in the `design` JSON column into a complete layout.
++ * Missing keys fall back to the defaults, so rows written before this feature
++ * existed still render, and a hand-edited JSON blob can never crash the canvas.
++ */
++export function normalizeLayout(raw: unknown): VoucherLayout {
++  const src = (raw ?? {}) as Record<string, unknown>;
++  const elements = {} as Record<VoucherElementId, VoucherElement>;
++  const rawElements = (src["elements"] ?? {}) as Record<string, unknown>;
++  for (const id of VOUCHER_ELEMENT_IDS) elements[id] = normalizeElement(id, rawElements[id]);
++
++  // Legacy rows carry flat qr_x / qr_y / qr_size columns instead of a layout.
++  if (!src["elements"]) {
++    const qr = elements.qr;
++    elements.qr = {
++      ...qr,
++      x: clamp(num(src["qr_x"], qr.x), 0, 1),
++      y: clamp(num(src["qr_y"], qr.y), 0, 1),
++      size: clamp(num(src["qr_size"], qr.size), ELEMENT_SIZE_RANGE.qr.min, ELEMENT_SIZE_RANGE.qr.max),
++    };
++  }
++
++  return {
++    // Negative values are meaningless; 0 stays 0 because 0 means "use artwork size".
++    width_px: Math.max(0, Math.round(num(src["width_px"], 0))),
++    height_px: Math.max(0, Math.round(num(src["height_px"], 0))),
++    elements,
++  };
++}
++
++/**
++ * Final pixel size of the exported card.
++ *
++ * `0` on either axis means "take it from the artwork". When only one axis is
++ * given, the other keeps the artwork's aspect ratio — which is why nothing is
++ * ever cropped: the artwork defines the template, the boxes only override it.
++ */
++export function resolveCardSize(
++  layout: VoucherLayout,
++  natural?: { width: number; height: number } | null,
++): { width: number; height: number } {
++  const natW = natural && natural.width > 0 ? natural.width : VOUCHER_W;
++  const natH = natural && natural.height > 0 ? natural.height : VOUCHER_H;
++  const wantW = layout.width_px > 0;
++  const wantH = layout.height_px > 0;
++
++  let width: number;
++  let height: number;
++  if (wantW && wantH) {
++    width = layout.width_px;
++    height = layout.height_px;
++  } else if (wantW) {
++    width = layout.width_px;
++    height = Math.round((layout.width_px * natH) / natW);
++  } else if (wantH) {
++    height = layout.height_px;
++    width = Math.round((layout.height_px * natW) / natH);
++  } else {
++    width = natW;
++    height = natH;
++  }
++  // Guard rails only: a 1 px or 20000 px canvas is a broken export, not a design.
++  return {
++    width: clamp(Math.round(width), 32, 8000),
++    height: clamp(Math.round(height), 32, 8000),
++  };
++}
+diff --git a/src/components/voucher-layout-editor.tsx b/src/components/voucher-layout-editor.tsx
+new file mode 100644
+index 0000000..1985885
+--- /dev/null
++++ b/src/components/voucher-layout-editor.tsx
+@@ -0,0 +1,273 @@
++import { useCallback, useEffect, useMemo, useRef, useState } from "react";
++import { Check, GripVertical } from "lucide-react";
++import { useI18n } from "@/lib/i18n";
++import { renderVoucherCanvas, type VoucherRenderData } from "@/components/voucher-canvas";
++import {
++  ELEMENT_SIZE_RANGE,
++  normalizeLayout,
++  resolveCardSize,
++  VOUCHER_ELEMENT_IDS,
++  type VoucherElementId,
++  type VoucherLayout,
++} from "@/lib/voucher-design";
++
++/** Placement happens in order: the QR first, then the promo code, then the rest. */
++type Step = "qr" | "code" | "all";
++
++const STEP_ELEMENTS: Record<Step, VoucherElementId[]> = {
++  qr: ["qr"],
++  code: ["code"],
++  all: VOUCHER_ELEMENT_IDS,
++};
++
++/** How wide a text handle is drawn, as a fraction of the card. Text is centred. */
++const TEXT_HANDLE_W = 0.44;
++
++function useNaturalSize(url: string | null) {
++  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
++  useEffect(() => {
++    if (!url) {
++      setSize(null);
++      return;
++    }
++    let cancelled = false;
++    const img = new Image();
++    img.crossOrigin = "anonymous";
++    img.onload = () => {
++      if (!cancelled) setSize({ width: img.naturalWidth, height: img.naturalHeight });
++    };
++    img.onerror = () => !cancelled && setSize(null);
++    img.src = url;
++    return () => {
++      cancelled = true;
++    };
++  }, [url]);
++  return size;
++}
++
++/**
++ * WYSIWYG placement editor.
++ *
++ * The backdrop is the real exported PNG, re-rendered through the same
++ * `renderVoucherCanvas` the download uses, so there is no second layout
++ * implementation that can drift. On top of it sits one drag handle per enabled
++ * element; dragging a handle only writes x/y, sizes come from the number boxes
++ * so a fat finger can never resize by accident.
++ */
++export function VoucherLayoutEditor({
++  layout,
++  onChange,
++  artworkUrl,
++  sample,
++}: {
++  layout: VoucherLayout;
++  onChange: (next: VoucherLayout) => void;
++  artworkUrl: string | null;
++  sample: VoucherRenderData;
++}) {
++  const { t } = useI18n();
++  const [step, setStep] = useState<Step>("qr");
++  const [active, setActive] = useState<VoucherElementId>("qr");
++  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
++  const frameRef = useRef<HTMLDivElement | null>(null);
++  const natural = useNaturalSize(artworkUrl);
++
++  const card = useMemo(
++    () => resolveCardSize(normalizeLayout(layout), natural),
++    [layout, natural],
++  );
++
++  // Re-render the real canvas on every change, one frame behind the drag so a
++  // long drag never queues dozens of QR encodes.
++  useEffect(() => {
++    let cancelled = false;
++    const id = window.setTimeout(() => {
++      renderVoucherCanvas(sample, { artworkUrl, layout })
++        .then((canvas) => {
++          if (!cancelled) setPreviewUrl(canvas.toDataURL("image/png"));
++        })
++        .catch(() => {});
++    }, 80);
++    return () => {
++      cancelled = true;
++      window.clearTimeout(id);
++    };
++  }, [layout, artworkUrl, sample]);
++
++  const patch = useCallback(
++    (id: VoucherElementId, next: Partial<VoucherLayout["elements"][VoucherElementId]>) => {
++      onChange({
++        ...layout,
++        elements: { ...layout.elements, [id]: { ...layout.elements[id], ...next } },
++      });
++    },
++    [layout, onChange],
++  );
++
++  const movable = STEP_ELEMENTS[step];
++
++  function startDrag(id: VoucherElementId, e: React.PointerEvent) {
++    if (!movable.includes(id)) return;
++    e.preventDefault();
++    e.stopPropagation();
++    setActive(id);
++    const frame = frameRef.current;
++    if (!frame) return;
++    const rect = frame.getBoundingClientRect();
++    const move = (ev: PointerEvent) => {
++      const x = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
++      const y = Math.min(1, Math.max(0, (ev.clientY - rect.top) / rect.height));
++      patch(id, { x, y });
++    };
++    move(e.nativeEvent);
++    const up = () => {
++      window.removeEventListener("pointermove", move);
++      window.removeEventListener("pointerup", up);
++      window.removeEventListener("pointercancel", up);
++    };
++    window.addEventListener("pointermove", move);
++    window.addEventListener("pointerup", up);
++    window.addEventListener("pointercancel", up);
++  }
++
++  /** Handle footprint as fractions of the card, matching what the renderer draws. */
++  function handleBox(id: VoucherElementId) {
++    const el = layout.elements[id];
++    if (id === "qr") return { w: el.size, h: (el.size * card.width) / card.height };
++    if (id === "strip") return { w: 1, h: el.size };
++    return { w: TEXT_HANDLE_W, h: Math.max(el.size * 1.4, 0.05) };
++  }
++
++  return (
++    <div className="space-y-3">
++      {/* Step rail: QR first, promo code second, everything else last. */}
++      <div className="flex flex-wrap items-center gap-2">
++        {(["qr", "code", "all"] as Step[]).map((s, i) => {
++          const done = (["qr", "code", "all"] as Step[]).indexOf(step) > i;
++          return (
++            <span
++              key={s}
++              className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${
++                step === s
++                  ? "bg-primary text-primary-foreground"
++                  : done
++                    ? "bg-secondary text-secondary-foreground"
++                    : "border border-border text-muted-foreground"
++              }`}
++            >
++              {done && <Check className="size-3" />}
++              {t(`vstep_${s}`)}
++            </span>
++          );
++        })}
++      </div>
++
++      <div className="flex flex-col items-center gap-2">
++        <div
++          ref={frameRef}
++          className="relative w-full max-w-[340px] overflow-hidden rounded-2xl border border-border bg-muted"
++          style={{ aspectRatio: `${card.width} / ${card.height}`, touchAction: "none" }}
++        >
++          {previewUrl && (
++            <img
++              src={previewUrl}
++              alt=""
++              className="pointer-events-none absolute inset-0 size-full select-none"
++            />
++          )}
++          {VOUCHER_ELEMENT_IDS.filter((id) => layout.elements[id].enabled).map((id) => {
++            const el = layout.elements[id];
++            const box = handleBox(id);
++            const draggable = movable.includes(id);
++            return (
++              <button
++                key={id}
++                type="button"
++                onPointerDown={(e) => startDrag(id, e)}
++                aria-label={t(`vel_${id}`)}
++                className={`absolute rounded-lg border-2 transition-colors ${
++                  draggable
++                    ? active === id
++                      ? "cursor-move border-primary bg-primary/10"
++                      : "cursor-move border-primary/50 bg-primary/5"
++                    : "pointer-events-none border-dashed border-border/60"
++                }`}
++                style={{
++                  width: `${box.w * 100}%`,
++                  height: `${box.h * 100}%`,
++                  left: `${(el.x - box.w / 2) * 100}%`,
++                  top: `${(el.y - box.h / 2) * 100}%`,
++                }}
++              >
++                {draggable && (
++                  <GripVertical className="absolute -right-1 -top-1 size-3.5 text-primary" />
++                )}
++              </button>
++            );
++          })}
++        </div>
++        <p className="text-center text-[11px] text-muted-foreground">{t("design_drag_hint")}</p>
++      </div>
++
++      {step !== "all" && (
++        <button
++          type="button"
++          onClick={() => {
++            const next: Step = step === "qr" ? "code" : "all";
++            setStep(next);
++            setActive(next === "code" ? "code" : "label");
++          }}
++          className="soft-press w-full rounded-2xl bg-secondary px-4 py-2.5 text-sm font-bold text-secondary-foreground"
++        >
++          {step === "qr" ? t("confirm_qr_spot") : t("confirm_code_spot")}
++        </button>
++      )}
++
++      {/* One row per element: show/hide, plus the size that actually drives the render. */}
++      <div className="space-y-2">
++        {VOUCHER_ELEMENT_IDS.map((id) => {
++          const el = layout.elements[id];
++          const range = ELEMENT_SIZE_RANGE[id];
++          return (
++            <div
++              key={id}
++              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-2xl border border-border/70 bg-card px-3 py-2"
++            >
++              <label className="flex min-w-0 cursor-pointer items-center gap-2">
++                <input
++                  type="checkbox"
++                  checked={el.enabled}
++                  onChange={(e) => patch(id, { enabled: e.target.checked })}
++                  className="size-4 shrink-0 accent-[var(--color-primary)]"
++                />
++                <span className="truncate text-sm font-semibold">{t(`vel_${id}`)}</span>
++              </label>
++              <div className="flex shrink-0 items-center gap-1">
++                <span className="text-[10px] font-bold uppercase text-muted-foreground">
++                  {t("size")}
++                </span>
++                <input
++                  type="number"
++                  min={Math.round(range.min * 100)}
++                  max={Math.round(range.max * 100)}
++                  step={1}
++                  disabled={!el.enabled}
++                  value={Math.round(el.size * 100)}
++                  onChange={(e) => {
++                    const pct = Number(e.target.value);
++                    if (!Number.isFinite(pct)) return;
++                    patch(id, {
++                      size: Math.min(range.max, Math.max(range.min, pct / 100)),
++                    });
++                  }}
++                  className="w-16 rounded-xl border border-border bg-background px-2 py-1 text-right text-sm outline-none focus:border-primary disabled:opacity-50"
++                />
++                <span className="text-[10px] text-muted-foreground">%</span>
++              </div>
++            </div>
++          );
++        })}
++      </div>
++    </div>
++  );
++}
+diff --git a/supabase/migrations/20260810000000_voucher_layout_no_expiry.sql b/supabase/migrations/20260810000000_voucher_layout_no_expiry.sql
+new file mode 100644
+index 0000000..c740297
+--- /dev/null
++++ b/supabase/migrations/20260810000000_voucher_layout_no_expiry.sql
+@@ -0,0 +1,61 @@
++-- Configurable voucher layouts, and the end of voucher expiry.
 +--
-+-- Before this migration only the accounts touched by the one-off backfill in
-+-- 20260803000100 ever had role = 'owner'; every later sign-up landed as a plain
-+-- 'cashier', so a second person could register but never act as an owner.
++-- Every printable part of a voucher (QR, promo code, label, reward, terms,
++-- ticket strip) becomes an entry in a `design` JSON document holding its
++-- on/off flag, its centre position and its size as 0..1 fractions of the card.
++-- Width/height live in the same document, where 0 means "use the artwork's own
++-- pixel size", so uploaded artwork is never cropped.
 +
-+-- 1. Repair existing data: the creator of each store is its owner.
-+UPDATE public.store_members m
-+   SET role = 'owner'
-+  FROM public.stores s
-+ WHERE s.id = m.store_id
-+   AND s.owner_id = m.user_id
-+   AND m.role <> 'owner';
++ALTER TABLE public.vouchers
++  ADD COLUMN IF NOT EXISTS design JSONB NOT NULL DEFAULT '{}'::jsonb;
 +
-+-- 2. Mirror the primary role into member_roles for anyone missing it.
-+INSERT INTO public.member_roles (store_id, member_id, user_id, role)
-+SELECT m.store_id, m.id, m.user_id, m.role
-+  FROM public.store_members m
-+ON CONFLICT (member_id, role) DO NOTHING;
++ALTER TABLE public.voucher_templates
++  ADD COLUMN IF NOT EXISTS design JSONB NOT NULL DEFAULT '{}'::jsonb;
 +
-+-- 3. Owners always keep the counter hat.
-+INSERT INTO public.member_roles (store_id, member_id, user_id, role)
-+SELECT m.store_id, m.id, m.user_id, 'cashier'::public.staff_role
-+  FROM public.store_members m
-+ WHERE m.role = 'owner'
-+ON CONFLICT (member_id, role) DO NOTHING;
++COMMENT ON COLUMN public.vouchers.design IS
++  'Voucher layout: {width_px, height_px, elements:{id:{enabled,x,y,size}}}. '
++  'width_px/height_px of 0 mean "use the artwork''s natural size".';
++COMMENT ON COLUMN public.voucher_templates.design IS
++  'Default layout applied to every voucher minted from this template.';
 +
-+-- 4. Keep new/updated members in sync automatically, so a fresh registration
-+--    can never end up with an empty role set again.
-+CREATE OR REPLACE FUNCTION public.sync_member_roles()
-+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-+BEGIN
-+  INSERT INTO public.member_roles (store_id, member_id, user_id, role)
-+  VALUES (NEW.store_id, NEW.id, NEW.user_id, NEW.role)
-+  ON CONFLICT (member_id, role) DO NOTHING;
++-- Carry the old flat QR placement columns into the new document so existing
++-- vouchers keep the exact QR spot their owner picked.
++UPDATE public.vouchers v
++   SET design = jsonb_build_object(
++         'width_px', 0,
++         'height_px', 0,
++         'elements', jsonb_build_object(
++           'qr', jsonb_build_object(
++             'enabled', true,
++             'x', COALESCE(t.qr_x, 0.78),
++             'y', COALESCE(t.qr_y, 0.5),
++             'size', COALESCE(t.qr_size, 0.32)
++           )
++         )
++       )
++  FROM public.voucher_templates t
++ WHERE v.template_id = t.id
++   AND v.design = '{}'::jsonb;
 +
-+  IF NEW.role = 'owner' THEN
-+    INSERT INTO public.member_roles (store_id, member_id, user_id, role)
-+    VALUES (NEW.store_id, NEW.id, NEW.user_id, 'cashier'::public.staff_role)
-+    ON CONFLICT (member_id, role) DO NOTHING;
-+  END IF;
++UPDATE public.voucher_templates
++   SET design = jsonb_build_object(
++         'width_px', 0,
++         'height_px', 0,
++         'elements', jsonb_build_object(
++           'qr', jsonb_build_object(
++             'enabled', true,
++             'x', COALESCE(qr_x, 0.78),
++             'y', COALESCE(qr_y, 0.5),
++             'size', COALESCE(qr_size, 0.32)
++           )
++         )
++       )
++ WHERE design = '{}'::jsonb;
 +
-+  RETURN NEW;
-+END; $$;
++-- Vouchers no longer expire. The column stays for historical rows, but nothing
++-- reads it any more: a code is only ever blocked by its own terms or usage cap.
++COMMENT ON COLUMN public.vouchers.expires_at IS
++  'RETIRED. Vouchers do not expire; kept only as a record of past campaigns.';
 +
-+DROP TRIGGER IF EXISTS store_members_sync_roles ON public.store_members;
-+CREATE TRIGGER store_members_sync_roles
-+AFTER INSERT OR UPDATE OF role ON public.store_members
-+FOR EACH ROW EXECUTE FUNCTION public.sync_member_roles();
-+
-+-- 5. Store settings: any owner of the store may edit it, not only the account
-+--    stored in stores.owner_id.
-+DROP POLICY IF EXISTS "store update by owner" ON public.stores;
-+CREATE POLICY "store update by owner" ON public.stores FOR UPDATE TO authenticated
-+  USING (id = public.my_store_id() AND public.is_owner())
-+  WITH CHECK (id = public.my_store_id() AND public.is_owner());
++-- Existing grants on both tables already cover the new column (GRANT on a table
++-- applies to columns added later), so no further grants are required here.

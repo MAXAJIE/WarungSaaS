@@ -917,9 +917,10 @@ export type VoucherInput = {
   required_qty?: number;
   usage_limit?: number;
   terms?: string;
-  expires_at?: string | null;
   template_id?: string | null;
   artwork_path?: string | null;
+  /** Layout document: element toggles, positions, sizes and canvas size. */
+  design?: Record<string, unknown> | null;
   is_active?: boolean;
 };
 
@@ -950,9 +951,10 @@ export async function upsertVoucherImpl(ctx: AuthedCtx, data: VoucherInput) {
     required_qty: Math.max(1, Number(data.required_qty ?? 1)),
     usage_limit: Math.max(0, Number(data.usage_limit ?? 1)),
     terms: (data.terms ?? "").slice(0, 500),
-    expires_at: data.expires_at ?? null,
     template_id: data.template_id ?? null,
     artwork_path: data.artwork_path ?? null,
+    // Layout is stored verbatim; the client normalises it before rendering.
+    design: data.design ?? {},
     is_active: data.is_active ?? true,
   };
 
@@ -1017,6 +1019,7 @@ export type VoucherTemplateInput = {
   qr_y?: number;
   qr_size?: number;
   defaults?: Record<string, unknown>;
+  design?: Record<string, unknown> | null;
 };
 
 export async function upsertVoucherTemplateImpl(ctx: AuthedCtx, data: VoucherTemplateInput) {
@@ -1029,6 +1032,7 @@ export async function upsertVoucherTemplateImpl(ctx: AuthedCtx, data: VoucherTem
     qr_y: clamp01(data.qr_y ?? 0.62),
     qr_size: clamp01(data.qr_size ?? 0.22),
     defaults: data.defaults ?? {},
+    design: data.design ?? {},
   };
   const query = data.id
     ? looseDb()

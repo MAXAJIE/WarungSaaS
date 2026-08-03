@@ -509,6 +509,24 @@ const en: Dict = {
   welcome_place_order_sub: "Browse the menu and build your ticket.",
   welcome_order_detail: "Order detail",
   welcome_order_detail_sub: "Track an order you already placed.",
+  // Voucher layout editor.
+  section_layout: "Voucher layout",
+  vstep_qr: "1. QR spot",
+  vstep_code: "2. Code spot",
+  vstep_all: "3. Everything else",
+  vel_strip: "Ticket strip",
+  vel_qr: "QR code",
+  vel_code: "Promo code",
+  vel_label: "Voucher name",
+  vel_reward: "Reward text",
+  vel_terms: "Terms line",
+  vel_expiry: "Expiry line",
+  design_drag_hint: "Drag a box on the voucher to move it. Sizes come from the boxes below.",
+  confirm_qr_spot: "QR is where I want it",
+  confirm_code_spot: "Promo code is where I want it",
+  voucher_width: "Width (px)",
+  voucher_height: "Height (px)",
+  voucher_size_hint: "0 = keep the artwork's own size. Nothing is ever cropped.",
 };
 
 const zh: Dict = {
@@ -965,6 +983,24 @@ const zh: Dict = {
   welcome_place_order_sub: "浏览菜单并建立你的订单。",
   welcome_order_detail: "订单详情",
   welcome_order_detail_sub: "查询你已提交的订单。",
+  // Voucher layout editor.
+  section_layout: "优惠券版面",
+  vstep_qr: "1. 二维码位置",
+  vstep_code: "2. 代码位置",
+  vstep_all: "3. 其他元素",
+  vel_strip: "底部色带",
+  vel_qr: "二维码",
+  vel_code: "优惠代码",
+  vel_label: "优惠券名称",
+  vel_reward: "奖励说明",
+  vel_terms: "条款文字",
+  vel_expiry: "有效期文字",
+  design_drag_hint: "在优惠券上拖动方框即可移动。大小请用下方的输入框调整。",
+  confirm_qr_spot: "二维码位置就这样",
+  confirm_code_spot: "优惠代码位置就这样",
+  voucher_width: "宽度（像素）",
+  voucher_height: "高度（像素）",
+  voucher_size_hint: "0 = 保留图案原本尺寸，绝不裁剪。",
 };
 
 const ms: Dict = {
@@ -1427,6 +1463,24 @@ const ms: Dict = {
   welcome_place_order_sub: "Lihat menu dan bina tiket anda.",
   welcome_order_detail: "Butiran pesanan",
   welcome_order_detail_sub: "Jejak pesanan yang telah anda buat.",
+  // Voucher layout editor.
+  section_layout: "Susun atur baucar",
+  vstep_qr: "1. Tempat QR",
+  vstep_code: "2. Tempat kod",
+  vstep_all: "3. Yang lain",
+  vel_strip: "Jalur tiket",
+  vel_qr: "Kod QR",
+  vel_code: "Kod promosi",
+  vel_label: "Nama baucar",
+  vel_reward: "Teks ganjaran",
+  vel_terms: "Baris terma",
+  vel_expiry: "Baris tamat tempoh",
+  design_drag_hint: "Seret kotak pada baucar untuk gerakkannya. Saiz diambil dari kotak di bawah.",
+  confirm_qr_spot: "QR sudah di tempatnya",
+  confirm_code_spot: "Kod promosi sudah di tempatnya",
+  voucher_width: "Lebar (px)",
+  voucher_height: "Tinggi (px)",
+  voucher_size_hint: "0 = kekalkan saiz asal reka bentuk. Tiada pemotongan.",
 };
 
 const DICTS: Record<Lang, Dict> = { en, zh, ms };

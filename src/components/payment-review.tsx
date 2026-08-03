@@ -177,13 +177,11 @@ export function PaymentReview({
         toast.error(
           r.reason === "used"
             ? t("voucher_used")
-            : r.reason === "expired"
-              ? t("blocker_expired")
-              : r.reason === "already_applied"
-                ? t("voucher_applied")
-                : r.reason === "not_stackable"
-                  ? t("voucher_not_stackable")
-                  : t("voucher_invalid"),
+            : r.reason === "already_applied"
+              ? t("voucher_applied")
+              : r.reason === "not_stackable"
+                ? t("voucher_not_stackable")
+                : t("voucher_invalid"),
         );
         return;
       }

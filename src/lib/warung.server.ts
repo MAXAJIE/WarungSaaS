@@ -210,7 +210,6 @@ export function toRule(row: VoucherRow): VoucherRule {
     required_qty: num("required_qty", 1),
     usage_limit: num("usage_limit", 1),
     used_count: num("used_count"),
-    expires_at: (row["expires_at"] as string | null) ?? null,
     is_active: row["is_active"] !== false,
     terms: String(row["terms"] ?? ""),
   };

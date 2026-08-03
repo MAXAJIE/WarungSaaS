@@ -24,8 +24,6 @@ export function OrderBlockers({
     switch (b.kind) {
       case "inactive":
         return t("blocker_inactive");
-      case "expired":
-        return t("blocker_expired");
       case "exhausted":
         return t("blocker_exhausted");
       case "min_spend":

@@ -32,7 +32,6 @@ export type VoucherRule = {
   required_qty: number;
   usage_limit: number;
   used_count: number;
-  expires_at: string | null;
   is_active: boolean;
   terms: string;
 };
@@ -45,7 +44,6 @@ export type OrderLine = {
 
 export type Blocker =
   | { kind: "inactive" }
-  | { kind: "expired" }
   | { kind: "exhausted" }
   | { kind: "min_spend"; need: number; have: number }
   | { kind: "min_items"; need: number; have: number }
@@ -79,7 +77,8 @@ export function voucherBlockers(v: VoucherRule, lines: OrderLine[]): Blocker[] {
   const itemCount = lines.reduce((s, l) => s + l.qty, 0);
 
   if (!v.is_active) out.push({ kind: "inactive" });
-  if (v.expires_at && new Date(v.expires_at).getTime() < Date.now()) out.push({ kind: "expired" });
+  // Vouchers never expire: a code is only ever held back by its own terms,
+  // its usage cap, or being switched off.
   if (v.usage_limit > 0 && v.used_count >= v.usage_limit) out.push({ kind: "exhausted" });
   if (v.min_spend > 0 && subtotal < v.min_spend)
     out.push({ kind: "min_spend", need: v.min_spend, have: money(subtotal) });

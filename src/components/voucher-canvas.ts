@@ -1,23 +1,29 @@
 /**
  * Pure canvas rendering for vouchers. Used both to preview a design while the
- * owner places the QR rectangle and to export PNGs for printing.
+ * owner arranges the elements and to export PNGs for printing.
  *
  * No React here — just canvas + the `qrcode` package — so it can run from
  * plain click handlers without re-render churn.
+ *
+ * Every drawn part comes from the `VoucherLayout`: nothing is hardcoded, so
+ * what the owner arranges in the editor is exactly what the PNG contains.
  */
 import QRCode from "qrcode";
+import {
+  normalizeLayout,
+  resolveCardSize,
+  VOUCHER_H,
+  VOUCHER_W,
+  type VoucherElement,
+  type VoucherLayout,
+} from "@/lib/voucher-design";
 
-export const VOUCHER_W = 1000;
-export const VOUCHER_H = 560;
+export { VOUCHER_W, VOUCHER_H };
 
 export type VoucherDesign = {
   artworkUrl?: string | null;
-  qr_x: number;
-  qr_y: number;
-  qr_size: number;
-  /** Voucher canvas size in px; defaults to VOUCHER_W x VOUCHER_H (1000x560). */
-  width?: number;
-  height?: number;
+  /** Anything shaped like a layout; it is normalised before use. */
+  layout: VoucherLayout | unknown;
 };
 
 export type VoucherRenderData = {
@@ -26,14 +32,7 @@ export type VoucherRenderData = {
   rewardText?: string;
   terms?: string | null;
   expiresAt?: string | null;
-  /**
-   * Print the human-readable code on the ticket strip. Turn it off when the
-   * artwork already carries the code, or when only the QR should be scannable.
-   * The QR still encodes the code either way. Defaults to true.
-   */
-  showCode?: boolean;
 };
-
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -53,12 +52,13 @@ function roundRect(
   h: number,
   r: number,
 ) {
+  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
   ctx.closePath();
 }
 
@@ -69,22 +69,25 @@ function fallbackHue(seed: string) {
   return h;
 }
 
-async function drawBackground(
+/**
+ * Resolves the artwork once so both its pixels and its natural size are
+ * available: the natural size is what a `0` width/height box falls back to.
+ */
+async function loadArtwork(url?: string | null): Promise<HTMLImageElement | null> {
+  if (!url) return null;
+  try {
+    return await loadImage(url);
+  } catch {
+    return null;
+  }
+}
+
+function drawFallbackBackground(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
-  design: VoucherDesign,
   seed: string,
 ) {
-  if (design.artworkUrl) {
-    try {
-      const img = await loadImage(design.artworkUrl);
-      ctx.drawImage(img, 0, 0, w, h);
-      return;
-    } catch {
-      // fall through to token fallback
-    }
-  }
   const hue = fallbackHue(seed);
   const grad = ctx.createLinearGradient(0, 0, w, h);
   grad.addColorStop(0, `hsl(${hue} 70% 45%)`);
@@ -105,63 +108,92 @@ async function drawBackground(
   ctx.restore();
 }
 
-/** Renders one voucher into a freshly created canvas at VOUCHER_W x VOUCHER_H. */
+/** Centre-anchored text with a soft shadow so it stays legible over any artwork. */
+function drawText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  el: VoucherElement,
+  w: number,
+  h: number,
+  weight: number,
+) {
+  const fontPx = Math.max(6, el.size * h);
+  ctx.save();
+  ctx.font = `${weight} ${fontPx}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(0,0,0,0.55)";
+  ctx.shadowBlur = fontPx * 0.35;
+  ctx.fillStyle = "#fff";
+  ctx.fillText(text, el.x * w, el.y * h, w * 0.96);
+  ctx.restore();
+}
+
+/**
+ * Renders one voucher into a freshly created canvas.
+ *
+ * Size comes from the layout: `0` on width/height means the artwork's own
+ * pixel size is used verbatim, so uploads are never cropped.
+ */
 export async function renderVoucherCanvas(
   data: VoucherRenderData,
   design: VoucherDesign,
 ): Promise<HTMLCanvasElement> {
-  const w = Math.max(100, Math.round(design.width ?? VOUCHER_W));
-  const h = Math.max(60, Math.round(design.height ?? VOUCHER_H));
+  const layout = normalizeLayout(design.layout);
+  const art = await loadArtwork(design.artworkUrl);
+  const natural = art ? { width: art.naturalWidth, height: art.naturalHeight } : null;
+  const { width: w, height: h } = resolveCardSize(layout, natural);
+
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
 
-  await drawBackground(ctx, w, h, design, data.code);
+  if (art) ctx.drawImage(art, 0, 0, w, h);
+  else drawFallbackBackground(ctx, w, h, data.code);
 
-  // Bottom ticket strip with code + reward, so it stays legible over any artwork.
-  const stripH = h * 0.26;
-  ctx.fillStyle = "rgba(15,15,20,0.62)";
-  ctx.fillRect(0, h - stripH, w, stripH);
+  const el = layout.elements;
 
-  const showCode = data.showCode !== false;
-  ctx.fillStyle = "#fff";
-  ctx.textBaseline = "middle";
-  if (showCode) {
-    ctx.font = "700 40px sans-serif";
-    ctx.fillText(data.code, 28, h - stripH / 2 - 14);
-  }
-  ctx.font = "500 20px sans-serif";
-  ctx.globalAlpha = 0.9;
-  const sub = [data.label, data.rewardText].filter(Boolean).join(" · ");
-  // Without the code line the reward re-centres in the strip instead of
-  // hanging off the bottom edge of an otherwise empty band.
-  if (sub) ctx.fillText(sub, 28, h - stripH / 2 + (showCode ? 20 : 0));
-  ctx.globalAlpha = 1;
-
-
-  if (data.expiresAt) {
-    ctx.font = "500 16px sans-serif";
-    ctx.textAlign = "right";
-    ctx.fillText(`exp. ${new Date(data.expiresAt).toLocaleDateString()}`, w - 20, h - 16);
-    ctx.textAlign = "left";
+  // Ticket strip first: it is the backdrop the text elements sit on.
+  if (el.strip.enabled) {
+    const bandH = Math.max(1, el.strip.size * h);
+    ctx.fillStyle = "rgba(15,15,20,0.62)";
+    ctx.fillRect(0, el.strip.y * h - bandH / 2, w, bandH);
   }
 
-  // QR block, positioned by the fractional rectangle picked during design.
-  const qrSize = Math.max(0.08, design.qr_size) * w;
-  const qrX = design.qr_x * w - qrSize / 2;
-  const qrY = design.qr_y * h - qrSize / 2;
-  const pad = qrSize * 0.08;
-  ctx.fillStyle = "#fff";
-  roundRect(ctx, qrX - pad, qrY - pad, qrSize + pad * 2, qrSize + pad * 2, qrSize * 0.06);
-  ctx.fill();
-  try {
-    const qrDataUrl = await QRCode.toDataURL(data.code, { margin: 0, width: 512 });
-    const qrImg = await loadImage(qrDataUrl);
-    ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
-  } catch {
-    // QR generation should never throw in practice; skip silently if it does.
+  if (el.code.enabled && data.code) drawText(ctx, data.code, el.code, w, h, 700);
+  if (el.label.enabled && data.label) drawText(ctx, data.label, el.label, w, h, 600);
+  if (el.reward.enabled && data.rewardText) drawText(ctx, data.rewardText, el.reward, w, h, 500);
+  if (el.terms.enabled && data.terms) drawText(ctx, data.terms, el.terms, w, h, 500);
+  if (el.expiry.enabled && data.expiresAt) {
+    drawText(
+      ctx,
+      `exp. ${new Date(data.expiresAt).toLocaleDateString()}`,
+      el.expiry,
+      w,
+      h,
+      500,
+    );
+  }
+
+  if (el.qr.enabled) {
+    const qrSize = Math.max(8, el.qr.size * w);
+    const qrX = el.qr.x * w - qrSize / 2;
+    const qrY = el.qr.y * h - qrSize / 2;
+    const pad = qrSize * 0.08;
+    ctx.fillStyle = "#fff";
+    roundRect(ctx, qrX - pad, qrY - pad, qrSize + pad * 2, qrSize + pad * 2, qrSize * 0.06);
+    ctx.fill();
+    try {
+      // Render the QR at least as dense as it will be drawn, so it stays crisp.
+      const px = Math.min(2048, Math.max(256, Math.ceil(qrSize)));
+      const qrDataUrl = await QRCode.toDataURL(data.code || "SAMPLE", { margin: 0, width: px });
+      const qrImg = await loadImage(qrDataUrl);
+      ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+    } catch {
+      // QR generation should never throw in practice; skip silently if it does.
+    }
   }
 
   return canvas;
@@ -192,19 +224,24 @@ export async function downloadVoucherPng(data: VoucherRenderData, design: Vouche
 }
 
 /**
- * Renders a whole batch onto one A4-ish printable sheet (3 columns, as many
- * rows as needed), so the owner can print a run of vouchers in one go.
+ * Renders a whole batch onto one printable sheet (3 columns, as many rows as
+ * needed), so the owner can print a run of vouchers in one go. Every cell uses
+ * the size the first card resolved to, which keeps the grid even.
  */
 export async function downloadVoucherSheetPng(
   vouchers: VoucherRenderData[],
   design: VoucherDesign,
   filename = "voucher-batch.png",
 ) {
+  if (!vouchers.length) return;
   const cols = 3;
-  const cellW = Math.max(100, Math.round(design.width ?? VOUCHER_W));
-  const cellH = Math.max(60, Math.round(design.height ?? VOUCHER_H));
   const gap = 40;
-  const rows = Math.max(1, Math.ceil(vouchers.length / cols));
+  const cells: HTMLCanvasElement[] = [];
+  for (const v of vouchers) cells.push(await renderVoucherCanvas(v, design));
+
+  const cellW = cells[0]!.width;
+  const cellH = cells[0]!.height;
+  const rows = Math.max(1, Math.ceil(cells.length / cols));
   const sheet = document.createElement("canvas");
   sheet.width = cols * cellW + gap * (cols + 1);
   sheet.height = rows * cellH + gap * (rows + 1);
@@ -213,16 +250,15 @@ export async function downloadVoucherSheetPng(
   ctx.fillStyle = "#f4f4f2";
   ctx.fillRect(0, 0, sheet.width, sheet.height);
 
-  for (let i = 0; i < vouchers.length; i++) {
+  for (let i = 0; i < cells.length; i++) {
     const col = i % cols;
     const row = Math.floor(i / cols);
     const x = gap + col * (cellW + gap);
     const y = gap + row * (cellH + gap);
-    const cell = await renderVoucherCanvas(vouchers[i]!, design);
     ctx.save();
     ctx.shadowColor = "rgba(0,0,0,0.25)";
     ctx.shadowBlur = 12;
-    ctx.drawImage(cell, x, y);
+    ctx.drawImage(cells[i]!, x, y, cellW, cellH);
     ctx.restore();
   }
 

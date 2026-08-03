@@ -287,8 +287,8 @@ export async function applyVoucherImpl(ctx: AuthedCtx, data: { orderId: string; 
   );
   if (rule.usage_limit > 0 && rule.used_count >= rule.usage_limit)
     return { ok: false, reason: "used" as const };
-  if (rule.expires_at && new Date(rule.expires_at).getTime() < Date.now())
-    return { ok: false, reason: "expired" as const };
+  // Vouchers do not expire. A freshly minted code is always applicable as far
+  // as the calendar is concerned; only its terms and usage cap can hold it back.
 
   const attached = await orderVouchers(order.id);
   if (attached.some((v) => v.id === rule.id))
