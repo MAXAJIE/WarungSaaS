@@ -1,214 +1,375 @@
-diff --git a/src/lib/customer.server.ts b/src/lib/customer.server.ts
-index 4260407..fcb4d32 100644
---- a/src/lib/customer.server.ts
-+++ b/src/lib/customer.server.ts
-@@ -126,7 +126,44 @@ export async function getMenuImpl(data: { slug: string }) {
-   return { store, products: menu };
- }
- 
--function publicOrderShape(order: {
-+/**
-+ * Every voucher attached to a ticket, so the customer can see exactly which
-+ * code produced their discount. Best effort: on stalls that have not run the
-+ * versatile-voucher migration yet the link table simply is not there.
-+ */
-+async function publicVouchers(order: { id?: string; voucher_id?: string | null } | null) {
-+  if (!order?.id) return [] as Array<{ code: string; label: string | null }>;
-+  const ids = new Set<string>();
-+  try {
-+    const { data } = await (
-+      supabaseAdmin as unknown as {
-+        from: (t: string) => {
-+          select: (c: string) => {
-+            eq: (c: string, v: string) => Promise<{ data: Array<{ voucher_id: string }> | null }>;
-+          };
-+        };
-+      }
-+    )
-+      .from("order_vouchers")
-+      .select("voucher_id")
-+      .eq("order_id", order.id);
-+    for (const row of data ?? []) if (row.voucher_id) ids.add(row.voucher_id);
-+  } catch {
-+    /* link table missing — fall back to the single voucher column */
-+  }
-+  if (order.voucher_id) ids.add(order.voucher_id);
-+  if (!ids.size) return [];
-+  const { data: rows } = await supabaseAdmin
-+    .from("vouchers")
-+    .select("code,label")
-+    .in("id", [...ids]);
-+  return ((rows ?? []) as Array<{ code: string; label: string | null }>).map((v) => ({
-+    code: v.code,
-+    label: v.label ?? null,
-+  }));
-+}
-+
-+async function publicOrderShape(order: {
-   id: string;
-   order_no: number | null;
-   order_code?: string | null;
-@@ -135,6 +172,9 @@ function publicOrderShape(order: {
-   status: string;
-   subtotal: number | string;
-   discount_total: number | string;
-+  special_discount?: number | string | null;
-+  special_discount_reason?: string | null;
-+  voucher_id?: string | null;
-   total: number | string;
-   guest_token: string;
-   qr_token: string | null;
-@@ -152,6 +192,7 @@ function publicOrderShape(order: {
-     options?: unknown;
-   }>;
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lovable <noreply@lovable.dev>
+Date: Mon, 3 Aug 2026 10:00:00 +0000
+Subject: [PATCH] Pickup read-only queue, mobile menu + image fixes, stall logo
+ URLs, stall QR scan copy
+
+---
+ src/components/qr-scanner-box.tsx       | 15 +++++--
+ src/lib/i18n.tsx                        | 17 ++++++++
+ src/lib/staff.server.ts                 | 10 +++++
+ src/routes/_authenticated/dashboard.tsx | 53 ++++++++++++++++++-------
+ src/routes/_authenticated/store.tsx     | 24 +++++------
+ src/routes/s.$slug.tsx                  | 23 ++++++-----
+ 6 files changed, 103 insertions(+), 39 deletions(-)
+
+diff --git a/src/components/qr-scanner-box.tsx b/src/components/qr-scanner-box.tsx
+index c20456c..c56f00f 100644
+--- a/src/components/qr-scanner-box.tsx
++++ b/src/components/qr-scanner-box.tsx
+@@ -29,10 +29,19 @@ export function parsePromoCode(raw: string): string | null {
+ export function QrScannerBox({
+   onScan,
+   parse = parseOrderCode,
++  title,
++  manualHint,
++  manualPlaceholder,
+ }: {
+   onScan: (code: string) => void;
+   /** Swap in `parsePromoCode` to scan a voucher instead of an order QR. */
+   parse?: (raw: string) => string | null;
++  /** Overrides the idle-camera heading (defaults to the staff wording). */
++  title?: string;
++  /** Overrides the manual-entry helper line. */
++  manualHint?: string;
++  /** Overrides the manual-entry input placeholder. */
++  manualPlaceholder?: string;
  }) {
-+  const vouchers = await publicVouchers(order);
+   const { t } = useI18n();
+   const videoRef = useRef<HTMLVideoElement | null>(null);
+@@ -139,7 +148,7 @@ export function QrScannerBox({
+               <div className="live-dot mx-auto mb-3 grid size-16 place-items-center rounded-full bg-primary text-primary-foreground">
+                 <Camera className="size-8" />
+               </div>
+-              <p className="text-lg font-semibold">{t("scan_title")}</p>
++              <p className="text-lg font-semibold">{title ?? t("scan_title")}</p>
+               <p className="mx-auto mt-1 max-w-xs text-sm text-muted-foreground">
+                 {t("scan_permission")}
+               </p>
+@@ -197,7 +206,7 @@ export function QrScannerBox({
+         <input
+           value={manual}
+           onChange={(e) => setManual(e.target.value)}
+-          placeholder={t("scan_manual_placeholder")}
++          placeholder={manualPlaceholder ?? t("scan_manual_placeholder")}
+           className="flex-1 bg-transparent text-sm outline-none"
+         />
+         <button
+@@ -207,7 +216,7 @@ export function QrScannerBox({
+           {t("scan_go")}
+         </button>
+       </form>
+-      <p className="text-center text-xs text-muted-foreground">{t("scan_manual")}</p>
++      <p className="text-center text-xs text-muted-foreground">{manualHint ?? t("scan_manual")}</p>
+     </div>
+   );
+ }
+diff --git a/src/lib/i18n.tsx b/src/lib/i18n.tsx
+index 1c13140..d341916 100644
+--- a/src/lib/i18n.tsx
++++ b/src/lib/i18n.tsx
+@@ -46,6 +46,10 @@ const en: Dict = {
+     "Approved orders for your compartment appear here the moment the cashier takes payment.",
+   empty_pickup_title: "Nothing waiting for pickup",
+   empty_pickup_hint: "Dishes show up here as soon as the kitchen marks them done.",
++  pickup_in_kitchen_title: "Still in the kitchen",
++  pickup_in_kitchen_hint:
++    "View only \u2014 you can act once the kitchen marks the order ready to pick-up.",
++  pickup_view_only: "View only",
+   empty_done_orders: "No closed tickets today yet.",
+   empty_cart_hint: "Pick something from the menu above and it lands here.",
+   empty_menu_title: "This stall has not published a menu yet",
+@@ -260,6 +264,8 @@ const en: Dict = {
+   start_your_order: "Start your order",
+   order_detail: "Order detail",
+   scan_stall_qr: "Scan the stall QR",
++  scan_stall_manual: "Or type the stall code shown under the QR.",
++  scan_stall_manual_placeholder: "Stall code",
+   confirm_received: "I got my order",
+   pickup_number: "Pickup number",
+   prepping: "We are prepping your order",
+@@ -698,6 +704,8 @@ const zh: Dict = {
+   start_your_order: "开始点餐",
+   order_detail: "订单详情",
+   scan_stall_qr: "扫描摊位二维码",
++  scan_stall_manual: "或输入二维码下方的摊位代码。",
++  scan_stall_manual_placeholder: "摊位代码",
+   confirm_received: "我已领取",
+   pickup_number: "取餐号码",
+   prepping: "正在为你准备",
+@@ -882,6 +890,9 @@ const zh: Dict = {
+   empty_kitchen_hint: "收银确认收款后，属于你组别的订单会立即出现在这里。",
+   empty_pickup_title: "没有待取餐的项目",
+   empty_pickup_hint: "厨房标记完成后，菜品会出现在这里。",
++  pickup_in_kitchen_title: "厨房制作中",
++  pickup_in_kitchen_hint: "仅供查看 —— 厨房标记可取餐后才能操作。",
++  pickup_view_only: "仅供查看",
+   empty_done_orders: "今天还没有已结束的订单。",
+   empty_cart_hint: "从上方菜单选一样，它就会出现在这里。",
+   empty_menu_title: "此摊位尚未发布菜单",
+@@ -1175,6 +1186,8 @@ const ms: Dict = {
+   start_your_order: "Mula pesanan anda",
+   order_detail: "Butiran pesanan",
+   scan_stall_qr: "Imbas QR gerai",
++  scan_stall_manual: "Atau taip kod gerai di bawah QR.",
++  scan_stall_manual_placeholder: "Kod gerai",
+   confirm_received: "Saya sudah terima",
+   pickup_number: "Nombor ambilan",
+   prepping: "Kami sedang menyediakan pesanan anda",
+@@ -1361,6 +1374,10 @@ const ms: Dict = {
+     "Pesanan yang diluluskan untuk bahagian anda muncul sebaik juruwang terima bayaran.",
+   empty_pickup_title: "Tiada yang menunggu diambil",
+   empty_pickup_hint: "Hidangan muncul di sini sebaik dapur menandakannya siap.",
++  pickup_in_kitchen_title: "Masih di dapur",
++  pickup_in_kitchen_hint:
++    "Lihat sahaja \u2014 anda boleh bertindak selepas dapur menandakan pesanan sedia diambil.",
++  pickup_view_only: "Lihat sahaja",
+   empty_done_orders: "Belum ada tiket selesai hari ini.",
+   empty_cart_hint: "Pilih sesuatu daripada menu di atas dan ia akan muncul di sini.",
+   empty_menu_title: "Gerai ini belum menerbitkan menu",
+diff --git a/src/lib/staff.server.ts b/src/lib/staff.server.ts
+index 8c475e6..7127973 100644
+--- a/src/lib/staff.server.ts
++++ b/src/lib/staff.server.ts
+@@ -60,9 +60,19 @@ export async function meImpl(ctx: AuthedCtx) {
+       .maybeSingle();
+     roleRequest = (rr as RoleRequest | null) ?? null;
+   }
++  // The stall row only keeps storage paths; the settings page needs real URLs
++  // or the <img> tags render as broken icons.
++  const storeRow = (membership?.store ?? null) as
++    ({ logo_path?: string | null; cover_path?: string | null } & Record<string, unknown>) | null;
++  const storeImages = {
++    logo_url: await signPhoto(storeRow?.logo_path ?? null),
++    cover_url: await signPhoto(storeRow?.cover_path ?? null),
++  };
    return {
-     id: order.id,
-     order_no: order.order_no,
-@@ -162,7 +203,12 @@ function publicOrderShape(order: {
-     status: order.status,
-     subtotal: Number(order.subtotal),
-     discount_total: Number(order.discount_total),
-+    special_discount: Number(order.special_discount ?? 0),
-+    special_discount_reason: order.special_discount_reason ?? null,
-+    /** Codes behind the discount, so the receipt explains itself. */
-+    vouchers,
-     total: Number(order.total),
-+
-     guest_token: order.guest_token,
-     qr_token: order.qr_token,
-     qr_expires_at: order.qr_expires_at,
-@@ -298,7 +344,7 @@ export async function saveCartImpl(data: {
-   await recomputeOrder(order!.id);
- 
-   const fresh = await loadGuestOrder(order!.guest_token);
--  return publicOrderShape(fresh as never);
-+  return await publicOrderShape(fresh as never);
- }
- 
- export async function submitOrderImpl(data: { guestToken: string }) {
-@@ -336,7 +382,7 @@ export async function submitOrderImpl(data: { guestToken: string }) {
-   });
- 
-   const fresh = await loadGuestOrder(data.guestToken);
--  return publicOrderShape(fresh as never);
-+  return await publicOrderShape(fresh as never);
- }
- 
- export async function getGuestOrderImpl(data: { guestToken: string }) {
-@@ -416,7 +462,7 @@ export async function getGuestOrderImpl(data: { guestToken: string }) {
- 
-   return {
-     gone: false as const,
--    order: publicOrderShape(order as never),
-+    order: await publicOrderShape(order as never),
-     store: store ? { name: store.name, slug: store.slug, currency: store.currency } : null,
-     queueAhead: ahead,
-     cupsAhead,
-@@ -456,7 +502,7 @@ export async function confirmReceiptImpl(data: { guestToken: string }) {
-     targetUrl: "/dashboard",
-   });
-   const fresh = await loadGuestOrder(data.guestToken);
--  return publicOrderShape(fresh as never);
-+  return await publicOrderShape(fresh as never);
- }
- 
- export async function cancelGuestOrderImpl(data: { guestToken: string }) {
+     profile: profile ?? { id: ctx.userId, display_name: "", preferred_lang: "en" },
+     member: membership?.member ?? null,
++    /** Public URLs for the stall logo/cover, derived from their storage paths. */
++    storeImages,
+     /** Every hat this person wears; the sidebar groups its links by these. */
+     roles: membership?.roles ?? [],
+     store: membership?.store ?? null,
 diff --git a/src/routes/_authenticated/dashboard.tsx b/src/routes/_authenticated/dashboard.tsx
-index 96ec833..f018137 100644
+index f018137..97681f5 100644
 --- a/src/routes/_authenticated/dashboard.tsx
 +++ b/src/routes/_authenticated/dashboard.tsx
-@@ -994,8 +994,10 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
-                     </ActionButton>
-                   )}
-                   {["approved", "preparing"].includes(o.status) && (
-+                    // Stays white until cooking has actually started, then it is
-+                    // the obvious next step and turns primary.
-                     <ActionButton
--                      tone="muted"
-+                      tone={o.status === "approved" ? "muted" : "primary"}
-                       onClick={() =>
-                         run.mutate(() =>
-                           advance({ data: { orderId: o.id, action: "kitchen_done" } }),
-@@ -1010,7 +1012,6 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
-                 <>
-                   {o.status === "kitchen_done" && (
-                     <ActionButton
--                      tone="muted"
-                       onClick={() =>
-                         run.mutate(() => advance({ data: { orderId: o.id, action: "receive" } }))
-                       }
-@@ -1018,11 +1019,17 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
-                       <QrCode className="size-4" /> {t("receive_items")}
-                     </ActionButton>
-                   )}
--                  <ActionButton onClick={() => setHandOver(o)}>
-+                  {/* Handing over only becomes the primary action once the
-+                      items were confirmed as received at the counter. */}
-+                  <ActionButton
-+                    tone={o.status === "kitchen_done" ? "muted" : "primary"}
-+                    onClick={() => setHandOver(o)}
-+                  >
-                     <Check className="size-4" /> {t("hand_over")}
+@@ -933,17 +933,23 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
+       )
+       .map((p) => p.id),
+   );
+-  const list = ((orders.data?.orders ?? []) as unknown as OrderRow[])
+-    .filter((o) =>
+-      role === "kitchen"
+-        ? ["approved", "preparing", "kitchen_done"].includes(o.status)
+-        : ["kitchen_done", "received"].includes(o.status),
+-    )
+-    .filter((o) =>
+-      myGroupId && groupProductIds.size
+-        ? o.items.some((i) => i.product_id && groupProductIds.has(i.product_id))
+-        : true,
+-    );
++  const mine = ((orders.data?.orders ?? []) as unknown as OrderRow[]).filter((o) =>
++    myGroupId && groupProductIds.size
++      ? o.items.some((i) => i.product_id && groupProductIds.has(i.product_id))
++      : true,
++  );
++  const list = mine.filter((o) =>
++    role === "kitchen"
++      ? ["approved", "preparing", "kitchen_done"].includes(o.status)
++      : ["kitchen_done", "received"].includes(o.status),
++  );
++  /**
++   * Pickup crew may follow approved tickets while the kitchen still cooks them,
++   * but strictly as a read-only heads-up: no buttons until the kitchen marks
++   * the ticket ready to pick-up (`kitchen_done`).
++   */
++  const watching =
++    role === "pickup" ? mine.filter((o) => ["approved", "preparing"].includes(o.status)) : [];
+ 
+   return (
+     <div className="space-y-4">
+@@ -973,12 +979,12 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
+ 
+       {orders.isLoading ? (
+         <Loading />
+-      ) : list.length === 0 ? (
++      ) : list.length === 0 && watching.length === 0 ? (
+         <EmptyState
+           title={role === "kitchen" ? t("empty_kitchen_title") : t("empty_pickup_title")}
+           hint={role === "kitchen" ? t("empty_kitchen_hint") : t("empty_pickup_hint")}
+         />
+-      ) : (
++      ) : list.length === 0 ? null : (
+         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+           {list.map((o) => (
+             <OrderCard key={o.id} order={o} currency={currency}>
+@@ -1029,12 +1035,31 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
                    </ActionButton>
                  </>
                )}
-+
+-
              </OrderCard>
            ))}
          </div>
+       )}
+ 
++      {watching.length > 0 && (
++        <section className="space-y-3">
++          <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-3">
++            <p className="text-sm font-bold">{t("pickup_in_kitchen_title")}</p>
++            <p className="mt-0.5 text-xs text-muted-foreground">{t("pickup_in_kitchen_hint")}</p>
++          </div>
++          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
++            {watching.map((o) => (
++              <div key={o.id} className="pointer-events-none opacity-70">
++                <OrderCard order={o} currency={currency}>
++                  <span className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1.5 text-xs font-bold text-muted-foreground">
++                    <Timer className="size-3.5" /> {t("pickup_view_only")}
++                  </span>
++                </OrderCard>
++              </div>
++            ))}
++          </div>
++        </section>
++      )}
++
+       <ConfirmDialog
+         open={!!handOver}
+         onClose={() => setHandOver(null)}
+diff --git a/src/routes/_authenticated/store.tsx b/src/routes/_authenticated/store.tsx
+index 6f2712d..785f7c5 100644
+--- a/src/routes/_authenticated/store.tsx
++++ b/src/routes/_authenticated/store.tsx
+@@ -74,6 +74,14 @@ function StorePage() {
+     setCoverPath(images.cover_path ?? null);
+   }, [store]);
+ 
++  // `logo_path`/`cover_path` are storage paths, never usable in <img src>. The
++  // server hands back resolved URLs alongside them; a freshly uploaded file
++  // takes priority so the tile updates before `me` refetches.
++  const savedLogoUrl = me.data?.storeImages?.logo_url ?? null;
++  const savedCoverUrl = me.data?.storeImages?.cover_url ?? null;
++  const logoSrc = logoPreview ?? (logoPath ? savedLogoUrl : null);
++  const coverSrc = coverPreview ?? (coverPath ? savedCoverUrl : null);
++
+   const storeMutation = useMutation({
+     mutationFn: async () =>
+       saveStore({
+@@ -159,12 +167,8 @@ function StorePage() {
+                     onClick={() => logoInput.current?.click()}
+                     className="soft-press mt-1 flex size-24 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-border bg-muted/40"
+                   >
+-                    {logoPreview || logoPath ? (
+-                      <img
+-                        src={logoPreview ?? logoPath ?? ""}
+-                        alt=""
+-                        className="size-full object-cover"
+-                      />
++                    {logoSrc ? (
++                      <img src={logoSrc} alt="" className="size-full object-cover" />
+                     ) : (
+                       <ImagePlus className="size-6 text-muted-foreground" />
+                     )}
+@@ -186,12 +190,8 @@ function StorePage() {
+                     onClick={() => coverInput.current?.click()}
+                     className="soft-press mt-1 flex aspect-video w-full items-center justify-center overflow-hidden rounded-2xl border border-dashed border-border bg-muted/40"
+                   >
+-                    {coverPreview || coverPath ? (
+-                      <img
+-                        src={coverPreview ?? coverPath ?? ""}
+-                        alt=""
+-                        className="size-full object-cover"
+-                      />
++                    {coverSrc ? (
++                      <img src={coverSrc} alt="" className="size-full object-cover" />
+                     ) : (
+                       <ImagePlus className="size-6 text-muted-foreground" />
+                     )}
 diff --git a/src/routes/s.$slug.tsx b/src/routes/s.$slug.tsx
-index eb36057..4c06168 100644
+index 4c06168..a8da808 100644
 --- a/src/routes/s.$slug.tsx
 +++ b/src/routes/s.$slug.tsx
-@@ -642,11 +642,49 @@ function StorePage() {
-                   </li>
-                 ))}
-               </ul>
-+              {(Number(liveOrder.discount_total ?? 0) > 0 ||
-+                Number(liveOrder.special_discount ?? 0) > 0) && (
-+                <div className="space-y-1 border-t border-border pt-3 text-sm">
-+                  <div className="flex justify-between text-muted-foreground">
-+                    <span>{t("subtotal")}</span>
-+                    <span>{formatMoney(liveOrder.subtotal, currency)}</span>
-+                  </div>
-+                  {Number(liveOrder.discount_total ?? 0) > 0 && (
-+                    <div className="flex justify-between gap-3 text-muted-foreground">
-+                      <span className="min-w-0">
-+                        {t("discount")}
-+                        {liveOrder.vouchers?.length
-+                          ? ` · ${liveOrder.vouchers
-+                              .map((v) => v.label || v.code)
-+                              .join(", ")}`
-+                          : ""}
-+                      </span>
-+                      <span className="shrink-0">
-+                        -{formatMoney(liveOrder.discount_total, currency)}
-+                      </span>
-+                    </div>
-+                  )}
-+                  {Number(liveOrder.special_discount ?? 0) > 0 && (
-+                    <div className="flex justify-between gap-3 text-muted-foreground">
-+                      <span className="min-w-0">
-+                        {t("special_discount")}
-+                        {liveOrder.special_discount_reason
-+                          ? ` · ${liveOrder.special_discount_reason}`
-+                          : ""}
-+                      </span>
-+                      <span className="shrink-0">
-+                        -{formatMoney(liveOrder.special_discount ?? 0, currency)}
-+                      </span>
-+                    </div>
-+                  )}
-+                </div>
-+              )}
-               <div className="flex justify-between border-t border-border pt-3 font-display text-lg font-bold">
-                 <span>{t("total")}</span>
+@@ -523,21 +523,23 @@ function StorePage() {
+                           type="button"
+                           disabled={locked || !store.is_open || p.sold_out}
+                           onClick={() => setDetail(p)}
+-                          className="cozy-card flex items-center gap-3 p-3 text-left disabled:opacity-60"
++                          className="cozy-card grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 p-3 text-left disabled:opacity-60 sm:flex"
+                         >
++                          {/* Photos are capped so one tall upload cannot blow up
++                              the row on a phone; the crop is already square. */}
+                           {p.photo_signed_url ? (
+                             <img
+                               src={p.photo_signed_url}
+                               alt={productName(p)}
+                               loading="lazy"
+-                              className="size-16 shrink-0 rounded-2xl object-cover"
++                              className="size-20 shrink-0 rounded-2xl object-cover sm:size-24"
+                             />
+                           ) : (
+-                            <span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-secondary text-secondary-foreground">
++                            <span className="grid size-20 shrink-0 place-items-center rounded-2xl bg-secondary text-secondary-foreground sm:size-24">
+                               <Soup className="size-6" />
+                             </span>
+                           )}
+-                          <div className="min-w-0 flex-1">
++                          <div className="min-w-0 sm:flex-1">
+                             <p className="truncate font-semibold">{productName(p)}</p>
+                             {p.description && (
+                               <p className="truncate text-xs text-muted-foreground">
+@@ -548,7 +550,7 @@ function StorePage() {
+                               {formatMoney(p.sell_price, currency)}
+                             </p>
+                           </div>
+-                          <span className="soft-press shrink-0 rounded-full bg-primary px-4 py-2 text-sm font-bold text-primary-foreground">
++                          <span className="soft-press col-span-2 shrink-0 rounded-full bg-primary px-4 py-2 text-center text-sm font-bold text-primary-foreground sm:col-auto">
+                             {t("add_to_order")}
+                           </span>
+                         </button>
+@@ -654,9 +656,7 @@ function StorePage() {
+                       <span className="min-w-0">
+                         {t("discount")}
+                         {liveOrder.vouchers?.length
+-                          ? ` · ${liveOrder.vouchers
+-                              .map((v) => v.label || v.code)
+-                              .join(", ")}`
++                          ? ` · ${liveOrder.vouchers.map((v) => v.label || v.code).join(", ")}`
+                           : ""}
+                       </span>
+                       <span className="shrink-0">
+@@ -684,7 +684,6 @@ function StorePage() {
                  <span>{formatMoney(liveOrder.total, currency)}</span>
                </div>
  
-+
+-
                {live && (
                  <p className="text-xs text-muted-foreground">
                    {t("est_wait")}: {live.estimateMinutes} {t("minutes")} · {live.queueAhead} ahead ·{" "}
+@@ -861,6 +860,9 @@ function StorePage() {
+ 
+       <Modal open={scanOpen} onClose={() => setScanOpen(false)} title={t("scan_stall_qr")}>
+         <QrScannerBox
++          title={t("scan_stall_qr")}
++          manualHint={t("scan_stall_manual")}
++          manualPlaceholder={t("scan_stall_manual_placeholder")}
+           onScan={(code) => {
+             setScanOpen(false);
+             navigate({ to: "/s/$slug", params: { slug: code } });
+@@ -916,10 +918,11 @@ function ProductDetail({
+     <Modal open onClose={onClose} title={title} subtitle={product.description || undefined}>
+       <div className="space-y-4">
+         {product.photo_signed_url && (
++          // Square crop, but never taller than a phone can comfortably show.
+           <img
+             src={product.photo_signed_url}
+             alt={title}
+-            className="aspect-square w-full rounded-2xl object-cover"
++            className="mx-auto aspect-square w-full max-w-[240px] rounded-2xl object-cover sm:max-w-[320px]"
+           />
+         )}
+ 
+-- 
+2.43.0
+

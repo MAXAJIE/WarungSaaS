@@ -523,21 +523,23 @@ function StorePage() {
                           type="button"
                           disabled={locked || !store.is_open || p.sold_out}
                           onClick={() => setDetail(p)}
-                          className="cozy-card flex items-center gap-3 p-3 text-left disabled:opacity-60"
+                          className="cozy-card grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 p-3 text-left disabled:opacity-60 sm:flex"
                         >
+                          {/* Photos are capped so one tall upload cannot blow up
+                              the row on a phone; the crop is already square. */}
                           {p.photo_signed_url ? (
                             <img
                               src={p.photo_signed_url}
                               alt={productName(p)}
                               loading="lazy"
-                              className="size-16 shrink-0 rounded-2xl object-cover"
+                              className="size-20 shrink-0 rounded-2xl object-cover sm:size-24"
                             />
                           ) : (
-                            <span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-secondary text-secondary-foreground">
+                            <span className="grid size-20 shrink-0 place-items-center rounded-2xl bg-secondary text-secondary-foreground sm:size-24">
                               <Soup className="size-6" />
                             </span>
                           )}
-                          <div className="min-w-0 flex-1">
+                          <div className="min-w-0 sm:flex-1">
                             <p className="truncate font-semibold">{productName(p)}</p>
                             {p.description && (
                               <p className="truncate text-xs text-muted-foreground">
@@ -548,7 +550,7 @@ function StorePage() {
                               {formatMoney(p.sell_price, currency)}
                             </p>
                           </div>
-                          <span className="soft-press shrink-0 rounded-full bg-primary px-4 py-2 text-sm font-bold text-primary-foreground">
+                          <span className="soft-press col-span-2 shrink-0 rounded-full bg-primary px-4 py-2 text-center text-sm font-bold text-primary-foreground sm:col-auto">
                             {t("add_to_order")}
                           </span>
                         </button>
@@ -654,9 +656,7 @@ function StorePage() {
                       <span className="min-w-0">
                         {t("discount")}
                         {liveOrder.vouchers?.length
-                          ? ` · ${liveOrder.vouchers
-                              .map((v) => v.label || v.code)
-                              .join(", ")}`
+                          ? ` · ${liveOrder.vouchers.map((v) => v.label || v.code).join(", ")}`
                           : ""}
                       </span>
                       <span className="shrink-0">
@@ -683,7 +683,6 @@ function StorePage() {
                 <span>{t("total")}</span>
                 <span>{formatMoney(liveOrder.total, currency)}</span>
               </div>
-
 
               {live && (
                 <p className="text-xs text-muted-foreground">
@@ -861,6 +860,9 @@ function StorePage() {
 
       <Modal open={scanOpen} onClose={() => setScanOpen(false)} title={t("scan_stall_qr")}>
         <QrScannerBox
+          title={t("scan_stall_qr")}
+          manualHint={t("scan_stall_manual")}
+          manualPlaceholder={t("scan_stall_manual_placeholder")}
           onScan={(code) => {
             setScanOpen(false);
             navigate({ to: "/s/$slug", params: { slug: code } });
@@ -916,10 +918,11 @@ function ProductDetail({
     <Modal open onClose={onClose} title={title} subtitle={product.description || undefined}>
       <div className="space-y-4">
         {product.photo_signed_url && (
+          // Square crop, but never taller than a phone can comfortably show.
           <img
             src={product.photo_signed_url}
             alt={title}
-            className="aspect-square w-full rounded-2xl object-cover"
+            className="mx-auto aspect-square w-full max-w-[240px] rounded-2xl object-cover sm:max-w-[320px]"
           />
         )}
 

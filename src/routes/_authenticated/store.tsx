@@ -74,6 +74,14 @@ function StorePage() {
     setCoverPath(images.cover_path ?? null);
   }, [store]);
 
+  // `logo_path`/`cover_path` are storage paths, never usable in <img src>. The
+  // server hands back resolved URLs alongside them; a freshly uploaded file
+  // takes priority so the tile updates before `me` refetches.
+  const savedLogoUrl = me.data?.storeImages?.logo_url ?? null;
+  const savedCoverUrl = me.data?.storeImages?.cover_url ?? null;
+  const logoSrc = logoPreview ?? (logoPath ? savedLogoUrl : null);
+  const coverSrc = coverPreview ?? (coverPath ? savedCoverUrl : null);
+
   const storeMutation = useMutation({
     mutationFn: async () =>
       saveStore({
@@ -159,12 +167,8 @@ function StorePage() {
                     onClick={() => logoInput.current?.click()}
                     className="soft-press mt-1 flex size-24 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-border bg-muted/40"
                   >
-                    {logoPreview || logoPath ? (
-                      <img
-                        src={logoPreview ?? logoPath ?? ""}
-                        alt=""
-                        className="size-full object-cover"
-                      />
+                    {logoSrc ? (
+                      <img src={logoSrc} alt="" className="size-full object-cover" />
                     ) : (
                       <ImagePlus className="size-6 text-muted-foreground" />
                     )}
@@ -186,12 +190,8 @@ function StorePage() {
                     onClick={() => coverInput.current?.click()}
                     className="soft-press mt-1 flex aspect-video w-full items-center justify-center overflow-hidden rounded-2xl border border-dashed border-border bg-muted/40"
                   >
-                    {coverPreview || coverPath ? (
-                      <img
-                        src={coverPreview ?? coverPath ?? ""}
-                        alt=""
-                        className="size-full object-cover"
-                      />
+                    {coverSrc ? (
+                      <img src={coverSrc} alt="" className="size-full object-cover" />
                     ) : (
                       <ImagePlus className="size-6 text-muted-foreground" />
                     )}

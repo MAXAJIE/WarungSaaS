@@ -933,17 +933,23 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
       )
       .map((p) => p.id),
   );
-  const list = ((orders.data?.orders ?? []) as unknown as OrderRow[])
-    .filter((o) =>
-      role === "kitchen"
-        ? ["approved", "preparing", "kitchen_done"].includes(o.status)
-        : ["kitchen_done", "received"].includes(o.status),
-    )
-    .filter((o) =>
-      myGroupId && groupProductIds.size
-        ? o.items.some((i) => i.product_id && groupProductIds.has(i.product_id))
-        : true,
-    );
+  const mine = ((orders.data?.orders ?? []) as unknown as OrderRow[]).filter((o) =>
+    myGroupId && groupProductIds.size
+      ? o.items.some((i) => i.product_id && groupProductIds.has(i.product_id))
+      : true,
+  );
+  const list = mine.filter((o) =>
+    role === "kitchen"
+      ? ["approved", "preparing", "kitchen_done"].includes(o.status)
+      : ["kitchen_done", "received"].includes(o.status),
+  );
+  /**
+   * Pickup crew may follow approved tickets while the kitchen still cooks them,
+   * but strictly as a read-only heads-up: no buttons until the kitchen marks
+   * the ticket ready to pick-up (`kitchen_done`).
+   */
+  const watching =
+    role === "pickup" ? mine.filter((o) => ["approved", "preparing"].includes(o.status)) : [];
 
   return (
     <div className="space-y-4">
@@ -973,12 +979,12 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
 
       {orders.isLoading ? (
         <Loading />
-      ) : list.length === 0 ? (
+      ) : list.length === 0 && watching.length === 0 ? (
         <EmptyState
           title={role === "kitchen" ? t("empty_kitchen_title") : t("empty_pickup_title")}
           hint={role === "kitchen" ? t("empty_kitchen_hint") : t("empty_pickup_hint")}
         />
-      ) : (
+      ) : list.length === 0 ? null : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {list.map((o) => (
             <OrderCard key={o.id} order={o} currency={currency}>
@@ -1029,10 +1035,29 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
                   </ActionButton>
                 </>
               )}
-
             </OrderCard>
           ))}
         </div>
+      )}
+
+      {watching.length > 0 && (
+        <section className="space-y-3">
+          <div className="rounded-2xl border border-dashed border-border bg-muted/40 px-4 py-3">
+            <p className="text-sm font-bold">{t("pickup_in_kitchen_title")}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t("pickup_in_kitchen_hint")}</p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {watching.map((o) => (
+              <div key={o.id} className="pointer-events-none opacity-70">
+                <OrderCard order={o} currency={currency}>
+                  <span className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1.5 text-xs font-bold text-muted-foreground">
+                    <Timer className="size-3.5" /> {t("pickup_view_only")}
+                  </span>
+                </OrderCard>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       <ConfirmDialog

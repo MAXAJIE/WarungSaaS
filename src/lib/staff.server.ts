@@ -60,9 +60,19 @@ export async function meImpl(ctx: AuthedCtx) {
       .maybeSingle();
     roleRequest = (rr as RoleRequest | null) ?? null;
   }
+  // The stall row only keeps storage paths; the settings page needs real URLs
+  // or the <img> tags render as broken icons.
+  const storeRow = (membership?.store ?? null) as
+    ({ logo_path?: string | null; cover_path?: string | null } & Record<string, unknown>) | null;
+  const storeImages = {
+    logo_url: await signPhoto(storeRow?.logo_path ?? null),
+    cover_url: await signPhoto(storeRow?.cover_path ?? null),
+  };
   return {
     profile: profile ?? { id: ctx.userId, display_name: "", preferred_lang: "en" },
     member: membership?.member ?? null,
+    /** Public URLs for the stall logo/cover, derived from their storage paths. */
+    storeImages,
     /** Every hat this person wears; the sidebar groups its links by these. */
     roles: membership?.roles ?? [],
     store: membership?.store ?? null,

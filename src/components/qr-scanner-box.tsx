@@ -29,10 +29,19 @@ export function parsePromoCode(raw: string): string | null {
 export function QrScannerBox({
   onScan,
   parse = parseOrderCode,
+  title,
+  manualHint,
+  manualPlaceholder,
 }: {
   onScan: (code: string) => void;
   /** Swap in `parsePromoCode` to scan a voucher instead of an order QR. */
   parse?: (raw: string) => string | null;
+  /** Overrides the idle-camera heading (defaults to the staff wording). */
+  title?: string;
+  /** Overrides the manual-entry helper line. */
+  manualHint?: string;
+  /** Overrides the manual-entry input placeholder. */
+  manualPlaceholder?: string;
 }) {
   const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -139,7 +148,7 @@ export function QrScannerBox({
               <div className="live-dot mx-auto mb-3 grid size-16 place-items-center rounded-full bg-primary text-primary-foreground">
                 <Camera className="size-8" />
               </div>
-              <p className="text-lg font-semibold">{t("scan_title")}</p>
+              <p className="text-lg font-semibold">{title ?? t("scan_title")}</p>
               <p className="mx-auto mt-1 max-w-xs text-sm text-muted-foreground">
                 {t("scan_permission")}
               </p>
@@ -197,7 +206,7 @@ export function QrScannerBox({
         <input
           value={manual}
           onChange={(e) => setManual(e.target.value)}
-          placeholder={t("scan_manual_placeholder")}
+          placeholder={manualPlaceholder ?? t("scan_manual_placeholder")}
           className="flex-1 bg-transparent text-sm outline-none"
         />
         <button
@@ -207,7 +216,7 @@ export function QrScannerBox({
           {t("scan_go")}
         </button>
       </form>
-      <p className="text-center text-xs text-muted-foreground">{t("scan_manual")}</p>
+      <p className="text-center text-xs text-muted-foreground">{manualHint ?? t("scan_manual")}</p>
     </div>
   );
 }
