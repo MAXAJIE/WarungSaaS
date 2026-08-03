@@ -1,115 +1,214 @@
-diff --git a/src/components/payment-review.tsx b/src/components/payment-review.tsx
-index c3573cf..53354e1 100644
---- a/src/components/payment-review.tsx
-+++ b/src/components/payment-review.tsx
-@@ -153,7 +153,9 @@ export function PaymentReview({
-     () => Object.fromEntries(products.map((p) => [p.id, p.name])),
-     [products],
-   );
--  const attached = order?.vouchers?.map((v) => v.voucher) ?? [];
-+  const attached = (order?.vouchers ?? []).map((v) => v.voucher);
-+  /** Never trust a partially-loaded ticket: the list must always be iterable. */
-+  const items = order?.items ?? [];
-   const eligibleGifts = order
-     ? gifts.filter((g) => g.is_active && Number(order.total) >= Number(g.threshold))
-     : [];
-@@ -310,14 +312,14 @@ export function PaymentReview({
-             mind about, as long as one item stays. */}
-         <Block title={t("ticket_cart")}>
-           <ul className="space-y-1 text-sm">
--            {order.items.map((i) => (
-+            {items.map((i) => (
-               <li key={i.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
-                 <span className="min-w-0 truncate">
-                   <span className="font-semibold">{i.qty}×</span> {i.name_snapshot}
-                 </span>
-                 <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
-                   {formatMoney(Number(i.unit_price) * i.qty, currency)}
--                  {order.items.length > 1 && (
-+                  {items.length > 1 && (
-                     <button
-                       type="button"
-                       onClick={() => removeLineM.mutate(i.id)}
-diff --git a/src/lib/orders.server.ts b/src/lib/orders.server.ts
-index e6ea282..b40cb76 100644
---- a/src/lib/orders.server.ts
-+++ b/src/lib/orders.server.ts
-@@ -301,7 +301,10 @@ export async function applyVoucherImpl(ctx: AuthedCtx, data: { orderId: string;
-   if (!order.voucher_id)
-     await supabaseAdmin.from("orders").update({ voucher_id: rule.id }).eq("id", order.id);
+diff --git a/src/lib/customer.server.ts b/src/lib/customer.server.ts
+index 4260407..fcb4d32 100644
+--- a/src/lib/customer.server.ts
++++ b/src/lib/customer.server.ts
+@@ -126,7 +126,44 @@ export async function getMenuImpl(data: { slug: string }) {
+   return { store, products: menu };
+ }
  
--  const updated = await recomputeOrder(order.id);
-+  await recomputeOrder(order.id);
-+  // The counter popup re-renders straight from this row, so it must carry the
-+  // full relations (items, vouchers, gift) — a bare row makes `items` undefined.
-+  const updated = await loadFullOrder(order.id);
-   const blockers = await orderVoucherBlockers(order.id);
-   await logAction({
-     storeId: store.id,
+-function publicOrderShape(order: {
++/**
++ * Every voucher attached to a ticket, so the customer can see exactly which
++ * code produced their discount. Best effort: on stalls that have not run the
++ * versatile-voucher migration yet the link table simply is not there.
++ */
++async function publicVouchers(order: { id?: string; voucher_id?: string | null } | null) {
++  if (!order?.id) return [] as Array<{ code: string; label: string | null }>;
++  const ids = new Set<string>();
++  try {
++    const { data } = await (
++      supabaseAdmin as unknown as {
++        from: (t: string) => {
++          select: (c: string) => {
++            eq: (c: string, v: string) => Promise<{ data: Array<{ voucher_id: string }> | null }>;
++          };
++        };
++      }
++    )
++      .from("order_vouchers")
++      .select("voucher_id")
++      .eq("order_id", order.id);
++    for (const row of data ?? []) if (row.voucher_id) ids.add(row.voucher_id);
++  } catch {
++    /* link table missing — fall back to the single voucher column */
++  }
++  if (order.voucher_id) ids.add(order.voucher_id);
++  if (!ids.size) return [];
++  const { data: rows } = await supabaseAdmin
++    .from("vouchers")
++    .select("code,label")
++    .in("id", [...ids]);
++  return ((rows ?? []) as Array<{ code: string; label: string | null }>).map((v) => ({
++    code: v.code,
++    label: v.label ?? null,
++  }));
++}
++
++async function publicOrderShape(order: {
+   id: string;
+   order_no: number | null;
+   order_code?: string | null;
+@@ -135,6 +172,9 @@ function publicOrderShape(order: {
+   status: string;
+   subtotal: number | string;
+   discount_total: number | string;
++  special_discount?: number | string | null;
++  special_discount_reason?: string | null;
++  voucher_id?: string | null;
+   total: number | string;
+   guest_token: string;
+   qr_token: string | null;
+@@ -152,6 +192,7 @@ function publicOrderShape(order: {
+     options?: unknown;
+   }>;
+ }) {
++  const vouchers = await publicVouchers(order);
+   return {
+     id: order.id,
+     order_no: order.order_no,
+@@ -162,7 +203,12 @@ function publicOrderShape(order: {
+     status: order.status,
+     subtotal: Number(order.subtotal),
+     discount_total: Number(order.discount_total),
++    special_discount: Number(order.special_discount ?? 0),
++    special_discount_reason: order.special_discount_reason ?? null,
++    /** Codes behind the discount, so the receipt explains itself. */
++    vouchers,
+     total: Number(order.total),
++
+     guest_token: order.guest_token,
+     qr_token: order.qr_token,
+     qr_expires_at: order.qr_expires_at,
+@@ -298,7 +344,7 @@ export async function saveCartImpl(data: {
+   await recomputeOrder(order!.id);
+ 
+   const fresh = await loadGuestOrder(order!.guest_token);
+-  return publicOrderShape(fresh as never);
++  return await publicOrderShape(fresh as never);
+ }
+ 
+ export async function submitOrderImpl(data: { guestToken: string }) {
+@@ -336,7 +382,7 @@ export async function submitOrderImpl(data: { guestToken: string }) {
+   });
+ 
+   const fresh = await loadGuestOrder(data.guestToken);
+-  return publicOrderShape(fresh as never);
++  return await publicOrderShape(fresh as never);
+ }
+ 
+ export async function getGuestOrderImpl(data: { guestToken: string }) {
+@@ -416,7 +462,7 @@ export async function getGuestOrderImpl(data: { guestToken: string }) {
+ 
+   return {
+     gone: false as const,
+-    order: publicOrderShape(order as never),
++    order: await publicOrderShape(order as never),
+     store: store ? { name: store.name, slug: store.slug, currency: store.currency } : null,
+     queueAhead: ahead,
+     cupsAhead,
+@@ -456,7 +502,7 @@ export async function confirmReceiptImpl(data: { guestToken: string }) {
+     targetUrl: "/dashboard",
+   });
+   const fresh = await loadGuestOrder(data.guestToken);
+-  return publicOrderShape(fresh as never);
++  return await publicOrderShape(fresh as never);
+ }
+ 
+ export async function cancelGuestOrderImpl(data: { guestToken: string }) {
 diff --git a/src/routes/_authenticated/dashboard.tsx b/src/routes/_authenticated/dashboard.tsx
-index aa7de85..96ec833 100644
+index 96ec833..f018137 100644
 --- a/src/routes/_authenticated/dashboard.tsx
 +++ b/src/routes/_authenticated/dashboard.tsx
-@@ -1,7 +1,7 @@
- import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
- import { createFileRoute, Link } from "@tanstack/react-router";
- import { useServerFn } from "@tanstack/react-start";
--import { useEffect, useMemo, useState } from "react";
-+import { useEffect, useMemo, useRef, useState } from "react";
- import { toast } from "sonner";
- import { Ban, Check, ChevronDown, QrCode, RefreshCw, Soup, Store, Timer, X } from "lucide-react";
- import { Loading, StaffShell, useMe, type StoreRole } from "@/components/staff-shell";
-@@ -637,6 +637,22 @@ function CashierBoard({ roles: _roles }: { roles: StoreRole[] }) {
-   const [confirm, setConfirm] = useState<OrderRow | null>(null);
-   /** The ticket the payment popup is reviewing, from a scan or a fresh walk-in. */
-   const [review, setReview] = useState<CounterOrder | null>(null);
-+  /**
-+   * A walk-in ticket only exists because the popup is open. Closing or
-+   * cancelling that popup must delete it again, otherwise it lingers forever as
-+   * a ghost "awaiting payment" the counter can never scan.
-+   */
-+  const walkInId = useRef<string | null>(null);
+@@ -994,8 +994,10 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
+                     </ActionButton>
+                   )}
+                   {["approved", "preparing"].includes(o.status) && (
++                    // Stays white until cooking has actually started, then it is
++                    // the obvious next step and turns primary.
+                     <ActionButton
+-                      tone="muted"
++                      tone={o.status === "approved" ? "muted" : "primary"}
+                       onClick={() =>
+                         run.mutate(() =>
+                           advance({ data: { orderId: o.id, action: "kitchen_done" } }),
+@@ -1010,7 +1012,6 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
+                 <>
+                   {o.status === "kitchen_done" && (
+                     <ActionButton
+-                      tone="muted"
+                       onClick={() =>
+                         run.mutate(() => advance({ data: { orderId: o.id, action: "receive" } }))
+                       }
+@@ -1018,11 +1019,17 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
+                       <QrCode className="size-4" /> {t("receive_items")}
+                     </ActionButton>
+                   )}
+-                  <ActionButton onClick={() => setHandOver(o)}>
++                  {/* Handing over only becomes the primary action once the
++                      items were confirmed as received at the counter. */}
++                  <ActionButton
++                    tone={o.status === "kitchen_done" ? "muted" : "primary"}
++                    onClick={() => setHandOver(o)}
++                  >
+                     <Check className="size-4" /> {t("hand_over")}
+                   </ActionButton>
+                 </>
+               )}
 +
-+  function discardWalkIn() {
-+    const id = walkInId.current;
-+    walkInId.current = null;
-+    setReview(null);
-+    if (!id) return;
-+    void cancel({ data: { orderId: id, reason: "walk-in cancelled at counter" } })
-+      .catch(() => undefined)
-+      .finally(() => qc.invalidateQueries({ queryKey: ["orders"] }));
-+  }
+             </OrderCard>
+           ))}
+         </div>
+diff --git a/src/routes/s.$slug.tsx b/src/routes/s.$slug.tsx
+index eb36057..4c06168 100644
+--- a/src/routes/s.$slug.tsx
++++ b/src/routes/s.$slug.tsx
+@@ -642,11 +642,49 @@ function StorePage() {
+                   </li>
+                 ))}
+               </ul>
++              {(Number(liveOrder.discount_total ?? 0) > 0 ||
++                Number(liveOrder.special_discount ?? 0) > 0) && (
++                <div className="space-y-1 border-t border-border pt-3 text-sm">
++                  <div className="flex justify-between text-muted-foreground">
++                    <span>{t("subtotal")}</span>
++                    <span>{formatMoney(liveOrder.subtotal, currency)}</span>
++                  </div>
++                  {Number(liveOrder.discount_total ?? 0) > 0 && (
++                    <div className="flex justify-between gap-3 text-muted-foreground">
++                      <span className="min-w-0">
++                        {t("discount")}
++                        {liveOrder.vouchers?.length
++                          ? ` · ${liveOrder.vouchers
++                              .map((v) => v.label || v.code)
++                              .join(", ")}`
++                          : ""}
++                      </span>
++                      <span className="shrink-0">
++                        -{formatMoney(liveOrder.discount_total, currency)}
++                      </span>
++                    </div>
++                  )}
++                  {Number(liveOrder.special_discount ?? 0) > 0 && (
++                    <div className="flex justify-between gap-3 text-muted-foreground">
++                      <span className="min-w-0">
++                        {t("special_discount")}
++                        {liveOrder.special_discount_reason
++                          ? ` · ${liveOrder.special_discount_reason}`
++                          : ""}
++                      </span>
++                      <span className="shrink-0">
++                        -{formatMoney(liveOrder.special_discount ?? 0, currency)}
++                      </span>
++                    </div>
++                  )}
++                </div>
++              )}
+               <div className="flex justify-between border-t border-border pt-3 font-display text-lg font-bold">
+                 <span>{t("total")}</span>
+                 <span>{formatMoney(liveOrder.total, currency)}</span>
+               </div>
  
-   return (
-     <div className="space-y-5">
-@@ -668,7 +684,14 @@ function CashierBoard({ roles: _roles }: { roles: StoreRole[] }) {
-       )}
- 
-       {tab === "new" && (
--        <WalkInPanel products={products} currency={currency} onCreated={setReview} />
-+        <WalkInPanel
-+          products={products}
-+          currency={currency}
-+          onCreated={(o) => {
-+            walkInId.current = o.id;
-+            setReview(o);
-+          }}
-+        />
-       )}
- 
-       {tab === "live" && (
-@@ -737,8 +760,12 @@ function CashierBoard({ roles: _roles }: { roles: StoreRole[] }) {
-         products={products}
-         gifts={gifts}
-         currency={currency}
--        onClose={() => setReview(null)}
--        onApproved={() => setTab("live")}
-+        onClose={discardWalkIn}
-+        onApproved={() => {
-+          // Approved tickets are real orders now — keep them.
-+          walkInId.current = null;
-+          setTab("live");
-+        }}
-       />
- 
-       {/* Cancelling is irreversible, so it never happens on a single stray tap. */}
++
+               {live && (
+                 <p className="text-xs text-muted-foreground">
+                   {t("est_wait")}: {live.estimateMinutes} {t("minutes")} · {live.queueAhead} ahead ·{" "}
