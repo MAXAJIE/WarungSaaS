@@ -126,7 +126,44 @@ export async function getMenuImpl(data: { slug: string }) {
   return { store, products: menu };
 }
 
-function publicOrderShape(order: {
+/**
+ * Every voucher attached to a ticket, so the customer can see exactly which
+ * code produced their discount. Best effort: on stalls that have not run the
+ * versatile-voucher migration yet the link table simply is not there.
+ */
+async function publicVouchers(order: { id?: string; voucher_id?: string | null } | null) {
+  if (!order?.id) return [] as Array<{ code: string; label: string | null }>;
+  const ids = new Set<string>();
+  try {
+    const { data } = await (
+      supabaseAdmin as unknown as {
+        from: (t: string) => {
+          select: (c: string) => {
+            eq: (c: string, v: string) => Promise<{ data: Array<{ voucher_id: string }> | null }>;
+          };
+        };
+      }
+    )
+      .from("order_vouchers")
+      .select("voucher_id")
+      .eq("order_id", order.id);
+    for (const row of data ?? []) if (row.voucher_id) ids.add(row.voucher_id);
+  } catch {
+    /* link table missing — fall back to the single voucher column */
+  }
+  if (order.voucher_id) ids.add(order.voucher_id);
+  if (!ids.size) return [];
+  const { data: rows } = await supabaseAdmin
+    .from("vouchers")
+    .select("code,label")
+    .in("id", [...ids]);
+  return ((rows ?? []) as Array<{ code: string; label: string | null }>).map((v) => ({
+    code: v.code,
+    label: v.label ?? null,
+  }));
+}
+
+async function publicOrderShape(order: {
   id: string;
   order_no: number | null;
   order_code?: string | null;
@@ -135,6 +172,9 @@ function publicOrderShape(order: {
   status: string;
   subtotal: number | string;
   discount_total: number | string;
+  special_discount?: number | string | null;
+  special_discount_reason?: string | null;
+  voucher_id?: string | null;
   total: number | string;
   guest_token: string;
   qr_token: string | null;
@@ -152,6 +192,7 @@ function publicOrderShape(order: {
     options?: unknown;
   }>;
 }) {
+  const vouchers = await publicVouchers(order);
   return {
     id: order.id,
     order_no: order.order_no,
@@ -162,7 +203,12 @@ function publicOrderShape(order: {
     status: order.status,
     subtotal: Number(order.subtotal),
     discount_total: Number(order.discount_total),
+    special_discount: Number(order.special_discount ?? 0),
+    special_discount_reason: order.special_discount_reason ?? null,
+    /** Codes behind the discount, so the receipt explains itself. */
+    vouchers,
     total: Number(order.total),
+
     guest_token: order.guest_token,
     qr_token: order.qr_token,
     qr_expires_at: order.qr_expires_at,
@@ -298,7 +344,7 @@ export async function saveCartImpl(data: {
   await recomputeOrder(order!.id);
 
   const fresh = await loadGuestOrder(order!.guest_token);
-  return publicOrderShape(fresh as never);
+  return await publicOrderShape(fresh as never);
 }
 
 export async function submitOrderImpl(data: { guestToken: string }) {
@@ -336,7 +382,7 @@ export async function submitOrderImpl(data: { guestToken: string }) {
   });
 
   const fresh = await loadGuestOrder(data.guestToken);
-  return publicOrderShape(fresh as never);
+  return await publicOrderShape(fresh as never);
 }
 
 export async function getGuestOrderImpl(data: { guestToken: string }) {
@@ -416,7 +462,7 @@ export async function getGuestOrderImpl(data: { guestToken: string }) {
 
   return {
     gone: false as const,
-    order: publicOrderShape(order as never),
+    order: await publicOrderShape(order as never),
     store: store ? { name: store.name, slug: store.slug, currency: store.currency } : null,
     queueAhead: ahead,
     cupsAhead,
@@ -456,7 +502,7 @@ export async function confirmReceiptImpl(data: { guestToken: string }) {
     targetUrl: "/dashboard",
   });
   const fresh = await loadGuestOrder(data.guestToken);
-  return publicOrderShape(fresh as never);
+  return await publicOrderShape(fresh as never);
 }
 
 export async function cancelGuestOrderImpl(data: { guestToken: string }) {

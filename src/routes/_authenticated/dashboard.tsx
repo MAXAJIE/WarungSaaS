@@ -994,8 +994,10 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
                     </ActionButton>
                   )}
                   {["approved", "preparing"].includes(o.status) && (
+                    // Stays white until cooking has actually started, then it is
+                    // the obvious next step and turns primary.
                     <ActionButton
-                      tone="muted"
+                      tone={o.status === "approved" ? "muted" : "primary"}
                       onClick={() =>
                         run.mutate(() =>
                           advance({ data: { orderId: o.id, action: "kitchen_done" } }),
@@ -1010,7 +1012,6 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
                 <>
                   {o.status === "kitchen_done" && (
                     <ActionButton
-                      tone="muted"
                       onClick={() =>
                         run.mutate(() => advance({ data: { orderId: o.id, action: "receive" } }))
                       }
@@ -1018,11 +1019,17 @@ function CrewBoard({ role }: { role: "kitchen" | "pickup" }) {
                       <QrCode className="size-4" /> {t("receive_items")}
                     </ActionButton>
                   )}
-                  <ActionButton onClick={() => setHandOver(o)}>
+                  {/* Handing over only becomes the primary action once the
+                      items were confirmed as received at the counter. */}
+                  <ActionButton
+                    tone={o.status === "kitchen_done" ? "muted" : "primary"}
+                    onClick={() => setHandOver(o)}
+                  >
                     <Check className="size-4" /> {t("hand_over")}
                   </ActionButton>
                 </>
               )}
+
             </OrderCard>
           ))}
         </div>

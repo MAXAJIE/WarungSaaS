@@ -642,10 +642,48 @@ function StorePage() {
                   </li>
                 ))}
               </ul>
+              {(Number(liveOrder.discount_total ?? 0) > 0 ||
+                Number(liveOrder.special_discount ?? 0) > 0) && (
+                <div className="space-y-1 border-t border-border pt-3 text-sm">
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>{t("subtotal")}</span>
+                    <span>{formatMoney(liveOrder.subtotal, currency)}</span>
+                  </div>
+                  {Number(liveOrder.discount_total ?? 0) > 0 && (
+                    <div className="flex justify-between gap-3 text-muted-foreground">
+                      <span className="min-w-0">
+                        {t("discount")}
+                        {liveOrder.vouchers?.length
+                          ? ` · ${liveOrder.vouchers
+                              .map((v) => v.label || v.code)
+                              .join(", ")}`
+                          : ""}
+                      </span>
+                      <span className="shrink-0">
+                        -{formatMoney(liveOrder.discount_total, currency)}
+                      </span>
+                    </div>
+                  )}
+                  {Number(liveOrder.special_discount ?? 0) > 0 && (
+                    <div className="flex justify-between gap-3 text-muted-foreground">
+                      <span className="min-w-0">
+                        {t("special_discount")}
+                        {liveOrder.special_discount_reason
+                          ? ` · ${liveOrder.special_discount_reason}`
+                          : ""}
+                      </span>
+                      <span className="shrink-0">
+                        -{formatMoney(liveOrder.special_discount ?? 0, currency)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="flex justify-between border-t border-border pt-3 font-display text-lg font-bold">
                 <span>{t("total")}</span>
                 <span>{formatMoney(liveOrder.total, currency)}</span>
               </div>
+
 
               {live && (
                 <p className="text-xs text-muted-foreground">
