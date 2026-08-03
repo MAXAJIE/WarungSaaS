@@ -26,7 +26,14 @@ export type VoucherRenderData = {
   rewardText?: string;
   terms?: string | null;
   expiresAt?: string | null;
+  /**
+   * Print the human-readable code on the ticket strip. Turn it off when the
+   * artwork already carries the code, or when only the QR should be scannable.
+   * The QR still encodes the code either way. Defaults to true.
+   */
+  showCode?: boolean;
 };
+
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -118,15 +125,21 @@ export async function renderVoucherCanvas(
   ctx.fillStyle = "rgba(15,15,20,0.62)";
   ctx.fillRect(0, h - stripH, w, stripH);
 
+  const showCode = data.showCode !== false;
   ctx.fillStyle = "#fff";
   ctx.textBaseline = "middle";
-  ctx.font = "700 40px sans-serif";
-  ctx.fillText(data.code, 28, h - stripH / 2 - 14);
+  if (showCode) {
+    ctx.font = "700 40px sans-serif";
+    ctx.fillText(data.code, 28, h - stripH / 2 - 14);
+  }
   ctx.font = "500 20px sans-serif";
   ctx.globalAlpha = 0.9;
   const sub = [data.label, data.rewardText].filter(Boolean).join(" · ");
-  if (sub) ctx.fillText(sub, 28, h - stripH / 2 + 20);
+  // Without the code line the reward re-centres in the strip instead of
+  // hanging off the bottom edge of an otherwise empty band.
+  if (sub) ctx.fillText(sub, 28, h - stripH / 2 + (showCode ? 20 : 0));
   ctx.globalAlpha = 1;
+
 
   if (data.expiresAt) {
     ctx.font = "500 16px sans-serif";

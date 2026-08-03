@@ -368,9 +368,18 @@ function StorePage() {
     <div className="grain min-h-screen bg-background pb-40">
       <header className="mx-auto grid max-w-3xl grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-5 sm:flex sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lift">
-            <Soup className="size-5" />
-          </span>
+          {store.logo_url ? (
+            <img
+              src={store.logo_url}
+              alt={store.name}
+              className="size-10 shrink-0 rounded-2xl object-cover shadow-lift"
+            />
+          ) : (
+            <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lift">
+              <Soup className="size-5" />
+            </span>
+          )}
+
           <div className="min-w-0">
             <h1 className="truncate font-display text-xl font-bold leading-tight">{store.name}</h1>
             <p className="truncate text-xs text-muted-foreground">
@@ -399,9 +408,18 @@ function StorePage() {
       {screen === "welcome" && (
         <main className="mx-auto max-w-3xl px-4 pb-16 pt-6">
           <section className="cozy-card overflow-hidden p-6 text-center sm:p-10">
-            <span className="mx-auto grid size-14 place-items-center rounded-3xl bg-secondary text-secondary-foreground">
-              <Soup className="size-7" />
-            </span>
+            {store.logo_url ? (
+              <img
+                src={store.logo_url}
+                alt={store.name}
+                className="mx-auto size-14 rounded-3xl object-cover"
+              />
+            ) : (
+              <span className="mx-auto grid size-14 place-items-center rounded-3xl bg-secondary text-secondary-foreground">
+                <Soup className="size-7" />
+              </span>
+            )}
+
             <p className="mt-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">
               {t("welcome_hero_kicker")}
             </p>

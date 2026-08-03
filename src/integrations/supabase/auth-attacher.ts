@@ -2,12 +2,31 @@
 import { createMiddleware } from "@tanstack/react-start";
 import { supabase } from "./client";
 
+function looksLikeJwt(token: string | undefined): token is string {
+  return typeof token === "string" && token.split(".").length === 3;
+}
+
 // Must be registered as a global `functionMiddleware` in `src/start.ts`; otherwise
 // the browser never attaches the bearer token to serverFn RPCs.
 export const attachSupabaseAuth = createMiddleware({ type: "function" }).client(
   async ({ next }) => {
     const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
+    let session = data.session;
+
+    // A device that has been idle (phone left on the page, tab restored from
+    // background) can hand back a stale or malformed cached token. Sending it
+    // makes the server-side verifier fail - previously surfacing as
+    // "jws protected header is invalid" - so refresh before using it.
+    const expiresAt = session?.expires_at ? session.expires_at * 1000 : 0;
+    const isExpiring = expiresAt > 0 && expiresAt - Date.now() < 60_000;
+
+    if (session && (isExpiring || !looksLikeJwt(session.access_token))) {
+      const { data: refreshed } = await supabase.auth.refreshSession();
+      session = refreshed.session ?? session;
+    }
+
+    const token = looksLikeJwt(session?.access_token) ? session!.access_token : undefined;
+
     return next({
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });

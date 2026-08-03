@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ChevronDown, Download, Gift, Plus, Printer, Ticket, Trash2 } from "lucide-react";
 import { ViewToolbar, useViewPrefs, viewPadClass } from "@/components/view-toolbar";
@@ -30,6 +30,11 @@ import {
   upsertVoucherTemplate,
   uploadVoucherArtwork,
 } from "@/lib/staff.functions";
+
+/** localStorage key for the export-time "print the code" toggle. */
+const SHOW_CODE_KEY = "warung.voucher.showCode";
+
+
 
 export const Route = createFileRoute("/_authenticated/promos")({
   component: PromosPage,
@@ -175,6 +180,21 @@ function PromosPage() {
   });
 
   /**
+   * Owner-controlled switch for what the customer sees on the exported voucher.
+   * The QR always encodes the code; this only decides whether the code is also
+   * printed as text. Kept in localStorage so the choice survives a reload
+   * without touching the vouchers table.
+   */
+  const [showCode, setShowCode] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem(SHOW_CODE_KEY) !== "0";
+  });
+  useEffect(() => {
+    window.localStorage.setItem(SHOW_CODE_KEY, showCode ? "1" : "0");
+  }, [showCode]);
+
+  /**
+
    * Exported PNGs must match what the owner saw in the placement preview, so the
    * canvas size travels with the artwork: whichever saved design uses the same
    * artwork also carries the width/height the owner typed in.
@@ -198,17 +218,23 @@ function PromosPage() {
 
   function exportOne(v: Voucher) {
     downloadVoucherPng(
-      { code: v.code, label: v.label, rewardText: rewardSummary(v, "RM") },
+      { code: v.code, label: v.label, rewardText: rewardSummary(v, "RM"), showCode },
       designFor(v),
     ).catch((e: Error) => toast.error(e.message));
   }
 
   function exportSheet(vs: Voucher[]) {
     downloadVoucherSheetPng(
-      vs.map((v) => ({ code: v.code, label: v.label, rewardText: rewardSummary(v, "RM") })),
+      vs.map((v) => ({
+        code: v.code,
+        label: v.label,
+        rewardText: rewardSummary(v, "RM"),
+        showCode,
+      })),
       designFor(vs[0]!),
     ).catch((e: Error) => toast.error(e.message));
   }
+
 
   return (
     <StaffShell
@@ -222,8 +248,10 @@ function PromosPage() {
       }
       storeName={me.data?.store?.name ?? null}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
+      {/* On phones the toolbar and the two controls stack instead of fighting
+          over one flex row, which is what made them overlap. */}
+      <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-start sm:justify-between">
+        <div className="min-w-0 sm:flex-1">
           <ViewToolbar
             prefs={prefs}
             set={set}
@@ -234,38 +262,52 @@ function PromosPage() {
             ]}
           />
         </div>
-        <details className="group relative shrink-0">
-          <summary className="soft-press inline-flex cursor-pointer list-none items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground shadow-lift">
-            <Plus className="size-4" /> {t("new_promo")}
-          </summary>
-          <div className="absolute right-0 z-30 mt-2 w-64 rounded-2xl border border-border bg-card p-2 shadow-lift">
-            <p className="px-2 pb-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-              {t("choose_promo_type")}
-            </p>
-            <button
-              onClick={(e) => {
-                (e.currentTarget.closest("details") as HTMLDetailsElement).open = false;
-                setVoucherInitial(null);
-                setApplyTemplateId(null);
-                setOpenVoucher(true);
-              }}
-              className="flex w-full items-center gap-2 rounded-xl p-2 text-left text-sm font-semibold hover:bg-muted"
-            >
-              <Ticket className="size-4 text-primary" /> {t("new_voucher")}
-            </button>
-            <button
-              onClick={(e) => {
-                (e.currentTarget.closest("details") as HTMLDetailsElement).open = false;
-                setGiftInitial(null);
-                setOpenGift(true);
-              }}
-              className="flex w-full items-center gap-2 rounded-xl p-2 text-left text-sm font-semibold hover:bg-muted"
-            >
-              <Gift className="size-4 text-primary" /> {t("new_gift")}
-            </button>
-          </div>
-        </details>
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+          {/* Owner picks what the customer sees on the downloaded voucher. */}
+          <label className="inline-flex min-w-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-xs font-semibold shadow-cozy">
+            <input
+              type="checkbox"
+              checked={showCode}
+              onChange={(e) => setShowCode(e.target.checked)}
+              className="size-4 shrink-0 accent-[var(--color-primary)]"
+            />
+            <span className="truncate">{t("voucher_show_code")}</span>
+          </label>
+
+          <details className="group relative shrink-0">
+            <summary className="soft-press inline-flex cursor-pointer list-none items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground shadow-lift">
+              <Plus className="size-4" /> {t("new_promo")}
+            </summary>
+            <div className="absolute right-0 z-30 mt-2 w-[min(16rem,calc(100vw-2.5rem))] rounded-2xl border border-border bg-card p-2 shadow-lift">
+              <p className="px-2 pb-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                {t("choose_promo_type")}
+              </p>
+              <button
+                onClick={(e) => {
+                  (e.currentTarget.closest("details") as HTMLDetailsElement).open = false;
+                  setVoucherInitial(null);
+                  setApplyTemplateId(null);
+                  setOpenVoucher(true);
+                }}
+                className="flex w-full items-center gap-2 rounded-xl p-2 text-left text-sm font-semibold hover:bg-muted"
+              >
+                <Ticket className="size-4 text-primary" /> {t("new_voucher")}
+              </button>
+              <button
+                onClick={(e) => {
+                  (e.currentTarget.closest("details") as HTMLDetailsElement).open = false;
+                  setGiftInitial(null);
+                  setOpenGift(true);
+                }}
+                className="flex w-full items-center gap-2 rounded-xl p-2 text-left text-sm font-semibold hover:bg-muted"
+              >
+                <Gift className="size-4 text-primary" /> {t("new_gift")}
+              </button>
+            </div>
+          </details>
+        </div>
       </div>
+
 
       {promos.isLoading ? (
         <Loading />
@@ -299,7 +341,7 @@ function PromosPage() {
                         {isBatch && (
                           <button
                             onClick={() => exportSheet(vs)}
-                            className="soft-press grid size-9 place-items-center rounded-2xl bg-secondary text-secondary-foreground"
+                            className="soft-press grid size-9 shrink-0 place-items-center rounded-2xl bg-secondary text-secondary-foreground"
                             aria-label={t("download_sheet")}
                             title={t("download_sheet")}
                           >
@@ -309,7 +351,7 @@ function PromosPage() {
                         {!isBatch && (
                           <button
                             onClick={() => exportOne(vs[0]!)}
-                            className="soft-press grid size-9 place-items-center rounded-2xl bg-secondary text-secondary-foreground"
+                            className="soft-press grid size-9 shrink-0 place-items-center rounded-2xl bg-secondary text-secondary-foreground"
                             aria-label={t("download_png")}
                             title={t("download_png")}
                           >
@@ -322,7 +364,7 @@ function PromosPage() {
                               ? setConfirmBatch({ batchId, label: batchLabel(vs) })
                               : setConfirmV(vs[0]!)
                           }
-                          className="soft-press grid size-9 place-items-center rounded-2xl bg-destructive/10 text-destructive"
+                          className="soft-press grid size-9 shrink-0 place-items-center rounded-2xl bg-destructive/10 text-destructive"
                           aria-label={t("delete")}
                         >
                           <Trash2 className="size-4" />
@@ -337,7 +379,7 @@ function PromosPage() {
                                 return next;
                               })
                             }
-                            className="soft-press grid size-9 place-items-center rounded-2xl border border-border"
+                            className="soft-press grid size-9 shrink-0 place-items-center rounded-2xl border border-border"
                             aria-label={isOpen ? t("collapse") : t("expand")}
                           >
                             <ChevronDown
@@ -356,14 +398,14 @@ function PromosPage() {
                               </span>
                               <button
                                 onClick={() => exportOne(v)}
-                                className="soft-press grid size-7 place-items-center rounded-xl bg-secondary text-secondary-foreground"
+                                className="soft-press grid size-7 shrink-0 place-items-center rounded-xl bg-secondary text-secondary-foreground"
                                 aria-label={t("download_png")}
                               >
                                 <Download className="size-3.5" />
                               </button>
                               <button
                                 onClick={() => setConfirmV(v)}
-                                className="soft-press grid size-7 place-items-center rounded-xl bg-destructive/10 text-destructive"
+                                className="soft-press grid size-7 shrink-0 place-items-center rounded-xl bg-destructive/10 text-destructive"
                                 aria-label={t("delete")}
                               >
                                 <Trash2 className="size-3.5" />
@@ -402,7 +444,7 @@ function PromosPage() {
                     </div>
                     <button
                       onClick={() => setConfirmG(g)}
-                      className="soft-press grid size-9 place-items-center rounded-2xl bg-destructive/10 text-destructive"
+                      className="soft-press grid size-9 shrink-0 place-items-center rounded-2xl bg-destructive/10 text-destructive"
                       aria-label={t("delete")}
                     >
                       <Trash2 className="size-4" />

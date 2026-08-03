@@ -16,8 +16,23 @@ export type PickerProduct = {
   is_available: boolean;
   is_combo?: boolean;
   combo_items?: Array<{ product_id: string; qty: number }>;
+  /** Raw storage PATH in the product-photos bucket — not usable as an <img src>. */
   photo_url?: string | null;
+  /** Resolved public URL built server-side by `signPhotos`. This is what renders. */
+  photo_signed_url?: string | null;
 };
+
+/**
+ * `photo_url` holds a storage path, so rendering it directly gives a broken
+ * image. The server resolves it into `photo_signed_url`; only fall back to the
+ * raw column when it already happens to be an absolute URL (legacy rows).
+ */
+export function pickerPhotoSrc(p: PickerProduct): string | null {
+  if (p.photo_signed_url) return p.photo_signed_url;
+  if (p.photo_url && /^https?:\/\//i.test(p.photo_url)) return p.photo_url;
+  return null;
+}
+
 
 export type CartEntry = {
   key: string;
@@ -72,26 +87,36 @@ export function ProductPickerGrid({
   }
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-      {available.map((p) => (
+      {available.map((p) => {
+        const photo = pickerPhotoSrc(p);
+        return (
         <button
           key={p.id}
           type="button"
           onClick={() => onPick(p)}
           className="soft-press flex aspect-square flex-col items-center justify-center gap-1.5 rounded-3xl border border-border bg-card p-3 text-center shadow-cozy transition-transform duration-150 hover:-translate-y-0.5"
         >
-          {p.photo_url ? (
-            <img src={p.photo_url} alt={p.name} className="size-12 rounded-2xl object-cover" />
+          {photo ? (
+            <img
+              src={photo}
+              alt={p.name}
+              loading="lazy"
+              className="size-12 rounded-2xl object-cover"
+            />
           ) : (
             <span className="grid size-12 place-items-center rounded-2xl bg-primary/10 text-lg font-bold text-primary">
               {p.name.charAt(0).toUpperCase()}
             </span>
           )}
+
           <span className="line-clamp-2 text-xs font-semibold">{p.name}</span>
           <span className="text-[11px] font-bold text-muted-foreground">
             {formatMoney(p.sell_price)}
           </span>
         </button>
-      ))}
+        );
+      })}
+
     </div>
   );
 }

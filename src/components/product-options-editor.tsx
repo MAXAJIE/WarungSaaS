@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -18,7 +18,18 @@ const inputClass =
   "w-full rounded-2xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary";
 
 /** Owner-side editor for the choices a customer sees on a product. */
-export function ProductOptionsEditor({ productId }: { productId: string }) {
+export function ProductOptionsEditor({
+  productId,
+  /**
+   * Lets the parent dialog flush an in-progress customisation template when the
+   * product itself is saved, so a half-typed group is never silently dropped.
+   * Called with a saver while a named draft is open, and with `null` otherwise.
+   */
+  onPendingSaveChange,
+}: {
+  productId: string;
+  onPendingSaveChange?: (productId: string, save: (() => Promise<void>) | null) => void;
+}) {
   const { t } = useI18n();
   const qc = useQueryClient();
   const list = useServerFn(listProductOptions);
@@ -35,25 +46,39 @@ export function ProductOptionsEditor({ productId }: { productId: string }) {
     queryFn: () => list({ data: { product_id: productId } }),
   });
 
+  // Kept in a ref so the saver handed to the parent always reads the latest
+  // draft without the parent having to re-subscribe on every keystroke.
+  const draftRef = useRef<OptionDraft | null>(draft);
+  draftRef.current = draft;
+
+  const persistDraft = useCallback(async () => {
+    const d = draftRef.current;
+    if (!d || !d.name.trim()) return;
+    await save({
+      data: {
+        ...(d.id ? { id: d.id } : {}),
+        product_id: productId,
+        name: d.name,
+        is_required: d.is_required,
+        values: d.values.filter((v) => v.label.trim()).map((v, i) => ({ ...v, sort_order: i })),
+      },
+    });
+    setDraft(null);
+    await qc.invalidateQueries({ queryKey: ["product-options", productId] });
+  }, [productId, qc, save]);
+
+  const hasPending = !!draft?.name.trim();
+  useEffect(() => {
+    if (!onPendingSaveChange) return;
+    onPendingSaveChange(productId, hasPending ? persistDraft : null);
+    return () => onPendingSaveChange(productId, null);
+  }, [hasPending, onPendingSaveChange, persistDraft, productId]);
+
   const saveM = useMutation({
-    mutationFn: () =>
-      save({
-        data: {
-          ...(draft?.id ? { id: draft.id } : {}),
-          product_id: productId,
-          name: draft!.name,
-          is_required: draft!.is_required,
-          values: draft!.values
-            .filter((v) => v.label.trim())
-            .map((v, i) => ({ ...v, sort_order: i })),
-        },
-      }),
-    onSuccess: () => {
-      setDraft(null);
-      qc.invalidateQueries({ queryKey: ["product-options", productId] });
-    },
+    mutationFn: persistDraft,
     onError: (e: Error) => toast.error(e.message),
   });
+
 
   const delM = useMutation({
     mutationFn: (id: string) => remove({ data: { id } }),

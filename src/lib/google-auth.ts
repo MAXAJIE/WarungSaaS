@@ -1,24 +1,25 @@
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
 
 /**
- * Google sign-in that works both inside the Lovable editor/preview and on a
- * local (or self-hosted) deployment.
+ * Google sign-in.
  *
- * The Lovable auth broker (`@lovable.dev/cloud-auth-js`) only accepts origins
- * it knows about, so on `localhost` it fails with an invalid-origin/redirect
- * error. On those origins we go straight to Supabase Auth instead, which is the
- * same provider the broker ends up using.
+ * We always drive Supabase Auth directly (PKCE) with an explicit, same-origin
+ * `redirectTo`. That matters for two reasons:
+ *
+ *  1. The Lovable auth broker only accepts origins it knows about, so it fails
+ *     on `localhost` and on the self-hosted Worker domain.
+ *  2. Passing `redirectTo` explicitly stops Supabase from falling back to the
+ *     project's *Site URL* — which is what made every device bounce through
+ *     `http://localhost:...` mid-flow. Whatever origin the browser is on is the
+ *     origin it comes back to.
+ *
+ * The provider always returns to the PUBLIC `/auth-callback` route, never
+ * straight to a protected page: the session has to be exchanged and persisted
+ * before the auth gate is allowed to look at it.
  */
-export function isLovableHostedOrigin(): boolean {
-  if (typeof window === "undefined") return false;
-  const host = window.location.hostname;
-  return (
-    host.endsWith(".lovable.app") ||
-    host.endsWith(".lovable.dev") ||
-    host.endsWith(".lovableproject.com")
-  );
-}
+
+/** Public callback route the OAuth provider must return to. */
+export const AUTH_CALLBACK_PATH = "/auth-callback";
 
 export type GoogleSignInResult = {
   /** The browser is navigating away to the provider. */
@@ -26,24 +27,17 @@ export type GoogleSignInResult = {
   error?: Error;
 };
 
+/** Absolute, same-origin URL the provider redirects back to. */
+export function authCallbackUrl(): string {
+  return `${window.location.origin}${AUTH_CALLBACK_PATH}`;
+}
+
 export async function signInWithGoogle(): Promise<GoogleSignInResult> {
-  const origin = window.location.origin;
-
-  if (isLovableHostedOrigin()) {
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: origin,
-    });
-    if (result.error) {
-      return { redirected: false, error: toError(result.error) };
-    }
-    return { redirected: Boolean(result.redirected) };
-  }
-
-  // Local / self-hosted: plain Supabase OAuth with a public callback route.
   const { error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: `${origin}/auth-callback`,
+      // Explicit + same-origin: never let Supabase substitute its Site URL.
+      redirectTo: authCallbackUrl(),
       queryParams: { prompt: "select_account" },
     },
   });

@@ -2,11 +2,15 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   QR_TTL_MINUTES,
   logAction,
+  looseDb,
+  productPhotoUrl,
   purgeExpired,
   randomToken,
   recomputeOrder,
   signPhotos,
 } from "./warung.server";
+
+
 import { notifyStore } from "./notifications.server";
 
 export type CartOptionInput = { option_id: string; value_id: string };
@@ -33,8 +37,26 @@ async function findStoreBySlug(slug: string) {
     )
     .eq("slug", (slug ?? "").trim().toLowerCase())
     .maybeSingle();
-  return store ?? null;
+  if (!store) return null;
+
+  // `logo_path`/`cover_path` arrived with the store-images migration and are not
+  // in the generated types yet, so they are read separately through a loose
+  // view of the same admin client. The customer page renders the saved picture
+  // beside the store name, so hand over a ready public URL, not a storage path.
+  const { data: images } = await looseDb()
+    .from("stores")
+    .select("logo_path,cover_path")
+    .eq("id", store.id)
+    .maybeSingle();
+
+  return {
+    ...store,
+    logo_url: productPhotoUrl(images?.logo_path ?? null),
+    cover_url: productPhotoUrl(images?.cover_path ?? null),
+  };
 }
+
+
 
 async function storeBySlug(slug: string) {
   const store = await findStoreBySlug(slug);

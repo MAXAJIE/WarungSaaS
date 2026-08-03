@@ -93,6 +93,26 @@ function slugify(input: string) {
     .slice(0, 40);
 }
 
+/**
+ * Every person who creates a store is that store's owner. The owner also keeps
+ * the counter hat, because a one-person stall still has to take payment.
+ * This is written for EVERY new store, so the site supports any number of
+ * owners (previously only the backfilled first account ever got 'owner').
+ */
+async function grantOwnerRoles(storeId: string, memberId: string, userId: string) {
+  await supabaseAdmin
+    .from("store_members")
+    .update({ role: "owner" as never })
+    .eq("id", memberId);
+  await supabaseAdmin.from("member_roles").upsert(
+    [
+      { store_id: storeId, member_id: memberId, user_id: userId, role: "owner" },
+      { store_id: storeId, member_id: memberId, user_id: userId, role: "cashier" },
+    ] as never,
+    { onConflict: "member_id,role" },
+  );
+}
+
 export async function createStoreImpl(
   ctx: AuthedCtx,
   data: { name: string; slug: string; tagline?: string },
@@ -116,15 +136,20 @@ export async function createStoreImpl(
         .select("display_name")
         .eq("id", ctx.userId)
         .maybeSingle();
-      await supabaseAdmin.from("store_members").upsert(
-        {
-          store_id: dupe.id,
-          user_id: ctx.userId,
-          role: "cashier",
-          display_name: profile?.display_name ?? "Owner",
-        },
-        { onConflict: "user_id" },
-      );
+      const { data: recovered } = await supabaseAdmin
+        .from("store_members")
+        .upsert(
+          {
+            store_id: dupe.id,
+            user_id: ctx.userId,
+            role: "owner" as never,
+            display_name: profile?.display_name ?? "Owner",
+          },
+          { onConflict: "user_id" },
+        )
+        .select("id")
+        .maybeSingle();
+      if (recovered) await grantOwnerRoles(dupe.id, recovered.id, ctx.userId);
       return dupe;
     }
     throw new Error("That store link is already taken. Try another one.");
@@ -152,12 +177,18 @@ export async function createStoreImpl(
     .eq("id", ctx.userId)
     .maybeSingle();
 
-  await supabaseAdmin.from("store_members").insert({
-    store_id: store.id,
-    user_id: ctx.userId,
-    role: "cashier",
-    display_name: profile?.display_name ?? "Owner",
-  });
+  const { data: member, error: memberError } = await supabaseAdmin
+    .from("store_members")
+    .insert({
+      store_id: store.id,
+      user_id: ctx.userId,
+      role: "owner" as never,
+      display_name: profile?.display_name ?? "Owner",
+    })
+    .select("id")
+    .single();
+  if (memberError) throw new Error(memberError.message);
+  await grantOwnerRoles(store.id, member.id, ctx.userId);
 
   await logAction({
     storeId: store.id,
@@ -384,13 +415,35 @@ export async function joinWithInviteImpl(ctx: AuthedCtx, data: { code: string; r
     .eq("id", ctx.userId)
     .maybeSingle();
 
-  const { error } = await supabaseAdmin.from("store_members").insert({
-    store_id: invite.store_id,
-    user_id: ctx.userId,
-    role: invite.role,
-    display_name: profile?.display_name ?? "Staff",
-  });
+  const { data: joined, error } = await supabaseAdmin
+    .from("store_members")
+    .insert({
+      store_id: invite.store_id,
+      user_id: ctx.userId,
+      role: invite.role,
+      display_name: profile?.display_name ?? "Staff",
+    })
+    .select("id")
+    .single();
   if (error) throw new Error(error.message);
+  if (joined) {
+    if (invite.role === "owner") {
+      // A store can have more than one owner; invited owners get the counter hat too.
+      await grantOwnerRoles(invite.store_id, joined.id, ctx.userId);
+    } else {
+      await supabaseAdmin.from("member_roles").upsert(
+        [
+          {
+            store_id: invite.store_id,
+            member_id: joined.id,
+            user_id: ctx.userId,
+            role: invite.role,
+          },
+        ] as never,
+        { onConflict: "member_id,role" },
+      );
+    }
+  }
   await supabaseAdmin
     .from("store_invites")
     .update({ used_by: ctx.userId, used_at: new Date().toISOString() })

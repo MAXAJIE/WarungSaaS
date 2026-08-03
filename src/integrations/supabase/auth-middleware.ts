@@ -3,45 +3,26 @@ import { createMiddleware } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
+import { createSupabaseFetch } from "./api-key-fetch";
+import {
+  getSupabasePublishableKey,
+  getSupabasePublishableKeyCandidates,
+  getSupabaseUrl,
+  missingEnvMessage,
+} from "./env.server";
 
-function isNewSupabaseApiKey(value: string): boolean {
-  return value.startsWith("sb_publishable_") || value.startsWith("sb_secret_");
-}
-
-function createSupabaseFetch(supabaseKey: string): typeof fetch {
-  return (input, init) => {
-    const headers = new Headers(
-      typeof Request !== "undefined" && input instanceof Request ? input.headers : undefined,
-    );
-
-    if (init?.headers) {
-      new Headers(init.headers).forEach((value, key) => headers.set(key, value));
-    }
-
-    // New Supabase API keys are opaque strings, not bearer JWTs.
-    if (
-      isNewSupabaseApiKey(supabaseKey) &&
-      headers.get("Authorization") === `Bearer ${supabaseKey}`
-    ) {
-      headers.delete("Authorization");
-    }
-
-    headers.set("apikey", supabaseKey);
-    return fetch(input, { ...init, headers });
-  };
-}
 
 export const requireSupabaseAuth = createMiddleware({ type: "function" }).server(
   async ({ next }) => {
-    const SUPABASE_URL = process.env["SUPABASE_URL"];
-    const SUPABASE_PUBLISHABLE_KEY = process.env["SUPABASE_PUBLISHABLE_KEY"];
+    const SUPABASE_URL = getSupabaseUrl();
+    const SUPABASE_PUBLISHABLE_KEY = getSupabasePublishableKey();
 
     if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
       const missing = [
         ...(!SUPABASE_URL ? ["SUPABASE_URL"] : []),
         ...(!SUPABASE_PUBLISHABLE_KEY ? ["SUPABASE_PUBLISHABLE_KEY"] : []),
       ];
-      const message = `Missing Supabase environment variable(s): ${missing.join(", ")}. Connect Supabase in Lovable Cloud.`;
+      const message = missingEnvMessage(missing);
       console.error(`[Supabase] ${message}`);
       throw new Error(message);
     }
@@ -73,7 +54,7 @@ export const requireSupabaseAuth = createMiddleware({ type: "function" }).server
 
     const supabase = createClient<Database>(SUPABASE_URL!, SUPABASE_PUBLISHABLE_KEY!, {
       global: {
-        fetch: createSupabaseFetch(SUPABASE_PUBLISHABLE_KEY!),
+        fetch: createSupabaseFetch(getSupabasePublishableKeyCandidates()),
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -85,20 +66,40 @@ export const requireSupabaseAuth = createMiddleware({ type: "function" }).server
       },
     });
 
-    const { data, error } = await supabase.auth.getClaims(token);
-    if (error || !data?.claims) {
-      throw new Error("Unauthorized: Invalid token");
+    // `getClaims` verifies locally against the project JWKS. A session minted
+    // before the project's signing keys changed - which is exactly what a
+    // second device with an older cached session carries - makes the underlying
+    // `jose` verifier throw raw errors such as "jws protected header is
+    // invalid". Never let that reach the UI: fall back to asking the Auth API
+    // to verify the token, and otherwise report a plain 401 so the client can
+    // refresh or sign in again.
+    let claims: Record<string, unknown> | undefined;
+
+    try {
+      const { data, error } = await supabase.auth.getClaims(token);
+      if (!error && data?.claims) claims = data.claims as unknown as Record<string, unknown>;
+    } catch {
+      claims = undefined;
     }
 
-    if (!data.claims.sub) {
+    if (!claims) {
+      const { data: userData, error: userError } = await supabase.auth.getUser(token);
+      if (userError || !userData?.user) {
+        throw new Error("Unauthorized: Session expired, please sign in again");
+      }
+      claims = { sub: userData.user.id, email: userData.user.email };
+    }
+
+    const sub = typeof claims["sub"] === "string" ? (claims["sub"] as string) : undefined;
+    if (!sub) {
       throw new Error("Unauthorized: No user ID found in token");
     }
 
     return next({
       context: {
         supabase,
-        userId: data.claims.sub,
-        claims: data.claims,
+        userId: sub,
+        claims,
       },
     });
   },

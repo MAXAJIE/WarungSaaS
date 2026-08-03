@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Check, Eye, GripVertical, ImagePlus, Layers, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Loading, StaffShell, useStoreGuard } from "@/components/staff-shell";
@@ -122,10 +122,23 @@ function ProductsPage() {
   const remove = useServerFn(deleteProduct);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
+  const [confirmSave, setConfirmSave] = useState(false);
   const [tab, setTab] = useState<TabId>("basics");
   const [cropFile, setCropFile] = useState<File | null>(null);
   const [order, setOrder] = useState<string[]>([]);
   const dragId = useRef<string | null>(null);
+  // Customisation editors register a saver here while they hold an unsaved
+  // template, so saving the product persists those templates in the same go.
+  const pendingOptionSaves = useRef(new Map<string, () => Promise<void>>());
+  const [pendingOptionCount, setPendingOptionCount] = useState(0);
+  const registerPendingOptionSave = useCallback(
+    (productId: string, saver: (() => Promise<void>) | null) => {
+      if (saver) pendingOptionSaves.current.set(productId, saver);
+      else pendingOptionSaves.current.delete(productId);
+      setPendingOptionCount(pendingOptionSaves.current.size);
+    },
+    [],
+  );
 
   const allRows = (list.data as Row[] | undefined) ?? [];
   const groups = (groupsQ.data as Group[] | undefined) ?? [];
@@ -136,7 +149,14 @@ function ProductsPage() {
   }, [list.dataUpdatedAt]);
 
   const saveM = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
+      // Templates first: if one fails the product save is aborted, so the
+      // owner is never told "saved" while a customisation was lost.
+      for (const saver of Array.from(pendingOptionSaves.current.values())) {
+        await saver();
+      }
+      pendingOptionSaves.current.clear();
+      setPendingOptionCount(0);
       const { photo_preview: _preview, group_ids, combo_items, stock_total, ...payload } = draft!;
       return save({
         data: {
@@ -149,6 +169,7 @@ function ProductsPage() {
         },
       });
     },
+
     onSuccess: () => {
       setDraft(null);
       qc.invalidateQueries({ queryKey: ["products"] });
@@ -284,7 +305,8 @@ function ProductsPage() {
               {t("cancel")}
             </button>
             <button
-              onClick={() => saveM.mutate()}
+              onClick={() => setConfirmSave(true)}
+
               disabled={!draft?.name || saveM.isPending}
               className="soft-press flex-1 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-lift disabled:opacity-60"
             >
@@ -543,7 +565,11 @@ function ProductsPage() {
                           {sub.name}
                         </summary>
                         <div className="border-t border-border/70 p-3">
-                          <ProductOptionsEditor productId={ci.product_id} />
+                          <ProductOptionsEditor
+                            productId={ci.product_id}
+                            onPendingSaveChange={registerPendingOptionSave}
+                          />
+
                         </div>
                       </details>
                     );
@@ -554,7 +580,11 @@ function ProductsPage() {
 
             <section className={`space-y-3 ${tab === "options" ? "" : "hidden"}`}>
               {draft.id ? (
-                <ProductOptionsEditor productId={draft.id} />
+                <ProductOptionsEditor
+                  productId={draft.id}
+                  onPendingSaveChange={registerPendingOptionSave}
+                />
+
               ) : (
                 <p className="text-sm text-muted-foreground">{t("save_first")}</p>
               )}
@@ -620,6 +650,21 @@ function ProductsPage() {
         confirmLabel={t("delete")}
         destructive
       />
+
+      <ConfirmDialog
+        open={confirmSave}
+        onClose={() => setConfirmSave(false)}
+        onConfirm={() => {
+          setConfirmSave(false);
+          saveM.mutate();
+        }}
+        title={t("save_product_title")}
+        message={
+          pendingOptionCount > 0 ? t("save_product_with_options") : t("save_product_message")
+        }
+        confirmLabel={t("save")}
+      />
+
 
       {cropFile && (
         <ImageCropper
