@@ -156,8 +156,17 @@ export function PaymentReview({
   const attached = (order?.vouchers ?? []).map((v) => v.voucher);
   /** Never trust a partially-loaded ticket: the list must always be iterable. */
   const items = order?.items ?? [];
+  /**
+   * The counter must never see two different totals on one ticket, so every
+   * number below is derived from the same breakdown instead of trusting a
+   * possibly stale `total` column.
+   */
+  const specialDiscount = Math.max(0, Number(order?.special_discount ?? 0));
+  const totalDiscount = Math.max(0, Number(order?.discount_total ?? 0));
+  const promoDiscount = Math.max(0, totalDiscount - specialDiscount);
+  const dueTotal = Math.max(0, Number(order?.subtotal ?? 0) - totalDiscount);
   const eligibleGifts = order
-    ? gifts.filter((g) => g.is_active && Number(order.total) >= Number(g.threshold))
+    ? gifts.filter((g) => g.is_active && dueTotal >= Number(g.threshold))
     : [];
 
   function settle(next: unknown) {
@@ -300,7 +309,7 @@ export function PaymentReview({
             className="soft-press flex-1 items-center justify-center gap-2 truncate rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-lift disabled:opacity-60"
           >
             <Check className="inline size-4" /> {t("approve_payment")} ·{" "}
-            {formatMoney(order.total, currency)}
+            {formatMoney(dueTotal, currency)}
           </button>
         </div>
       }
@@ -335,15 +344,24 @@ export function PaymentReview({
             <span className="text-muted-foreground">{t("subtotal")}</span>
             <span>{formatMoney(order.subtotal, currency)}</span>
           </div>
-          {Number(order.discount_total) > 0 && (
+          {promoDiscount > 0 && (
             <div className="flex justify-between text-sm text-muted-foreground">
-              <span>{t("discount")}</span>
-              <span>-{formatMoney(order.discount_total, currency)}</span>
+              <span>{t("promo_discount")}</span>
+              <span>-{formatMoney(promoDiscount, currency)}</span>
+            </div>
+          )}
+          {specialDiscount > 0 && (
+            <div className="flex justify-between gap-3 text-sm text-muted-foreground">
+              <span className="min-w-0 truncate">
+                {t("special_discount")}
+                {order.special_discount_reason ? ` · ${order.special_discount_reason}` : ""}
+              </span>
+              <span className="shrink-0">-{formatMoney(specialDiscount, currency)}</span>
             </div>
           )}
           <div className="flex justify-between font-display text-lg font-bold">
             <span>{t("total")}</span>
-            <span>{formatMoney(order.total, currency)}</span>
+            <span>{formatMoney(dueTotal, currency)}</span>
           </div>
           <button
             type="button"

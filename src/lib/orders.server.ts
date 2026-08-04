@@ -701,11 +701,8 @@ export async function setSpecialDiscountImpl(
   if (order.status !== "submitted")
     throw new Error("A discount can only be added before payment is approved.");
 
-  const threshold = Number((store as { event_spend?: number | string }).event_spend ?? 0);
-  if (threshold <= 0) throw new Error("No event discount is running.");
-  if (Number(order.subtotal) < threshold)
-    throw new Error("This order has not reached the event spend yet.");
-
+  // An event discount is a manual, reason-tagged deduction: the counter may
+  // give it on any ticket, so there is no spend threshold to clear.
   const amount = Math.max(0, Math.min(Number(order.subtotal), Number(data.amount) || 0));
   const reason = (data.reason ?? "").trim().slice(0, 120);
   if (amount > 0 && !reason) throw new Error("Please give a reason for the discount.");

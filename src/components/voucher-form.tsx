@@ -364,7 +364,14 @@ export function VoucherForm({
             </Field>
 
             {rewardNeedsProduct && (
-              <Field label={t("pick_product")} hint="Which menu item does this reward apply to?">
+              <Field
+                label={value.reward === "buy_x_get_y" ? t("free_product") : t("pick_product")}
+                hint={
+                  value.reward === "buy_x_get_y"
+                    ? "Which item is given away for free (Y)?"
+                    : "Which menu item does this reward apply to?"
+                }
+              >
                 <ProductPicker
                   value={value.reward_product_id}
                   onChange={(v) => setValue({ ...value, reward_product_id: v })}
@@ -388,6 +395,19 @@ export function VoucherForm({
             )}
 
             {value.reward === "buy_x_get_y" && (
+              <Field label={t("buy_product")} hint="Which item must the customer buy (X)?">
+                <ProductPicker
+                  value={value.required_product_id}
+                  onChange={(v) =>
+                    setValue({ ...value, required_product_id: v, required_qty: value.buy_qty })
+                  }
+                  products={products}
+                  placeholder={t("buy_product")}
+                />
+              </Field>
+            )}
+
+            {value.reward === "buy_x_get_y" && (
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <Field label={t("buy_qty")} hint="How many must the customer buy?">
                   <input
@@ -395,7 +415,13 @@ export function VoucherForm({
                     min="1"
                     placeholder="1"
                     value={value.buy_qty}
-                    onChange={(e) => setValue({ ...value, buy_qty: Number(e.target.value) })}
+                    onChange={(e) =>
+                      setValue({
+                        ...value,
+                        buy_qty: Number(e.target.value),
+                        required_qty: Number(e.target.value) || 1,
+                      })
+                    }
                     className={inputCls}
                   />
                 </Field>
@@ -497,27 +523,31 @@ export function VoucherForm({
                 />
               </Field>
             </div>
-            <Field
-              label={t("required_product")}
-              hint="Require a specific product to be in the order."
-            >
-              <ProductPicker
-                value={value.required_product_id}
-                onChange={(v) => setValue({ ...value, required_product_id: v })}
-                products={products}
-                placeholder={t("none")}
-              />
-            </Field>
-            {value.required_product_id && (
-              <Field label={t("required_qty")}>
-                <input
-                  type="number"
-                  min="1"
-                  value={value.required_qty}
-                  onChange={(e) => setValue({ ...value, required_qty: Number(e.target.value) })}
-                  className={inputCls}
-                />
-              </Field>
+            {value.reward !== "buy_x_get_y" && (
+              <>
+                <Field
+                  label={t("required_product")}
+                  hint="Require a specific product to be in the order."
+                >
+                  <ProductPicker
+                    value={value.required_product_id}
+                    onChange={(v) => setValue({ ...value, required_product_id: v })}
+                    products={products}
+                    placeholder={t("none")}
+                  />
+                </Field>
+                {value.required_product_id && (
+                  <Field label={t("required_qty")}>
+                    <input
+                      type="number"
+                      min="1"
+                      value={value.required_qty}
+                      onChange={(e) => setValue({ ...value, required_qty: Number(e.target.value) })}
+                      className={inputCls}
+                    />
+                  </Field>
+                )}
+              </>
             )}
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <Field label={t("usage_limit")} hint="0 = unlimited uses.">

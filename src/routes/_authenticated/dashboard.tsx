@@ -402,13 +402,28 @@ function OrderCard({
       {order.note && <p className="mt-2 text-xs italic text-muted-foreground">“{order.note}”</p>}
 
       <div className="mt-3 space-y-0.5 border-t border-border pt-2 text-sm">
-        {Number(order.discount_total) > 0 && (
+        {Number(order.discount_total) - Number(order.special_discount ?? 0) > 0 && (
           <div className="flex justify-between text-muted-foreground">
             <span>
-              {t("discount")}
+              {t("promo_discount")}
               {order.voucher ? ` · ${order.voucher.code}` : ""}
             </span>
-            <span>-{formatMoney(order.discount_total, currency)}</span>
+            <span>
+              -
+              {formatMoney(
+                Number(order.discount_total) - Number(order.special_discount ?? 0),
+                currency,
+              )}
+            </span>
+          </div>
+        )}
+        {Number(order.special_discount ?? 0) > 0 && (
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 text-muted-foreground">
+            <span className="min-w-0 truncate">
+              {t("special_discount")}
+              {order.special_discount_reason ? ` · ${order.special_discount_reason}` : ""}
+            </span>
+            <span className="shrink-0">-{formatMoney(order.special_discount ?? 0, currency)}</span>
           </div>
         )}
         {order.gift && (
@@ -544,13 +559,19 @@ function OrderDetailModal({
               </span>
             </div>
           )}
-          {Number(order.discount_total) > 0 && (
+          {Number(order.discount_total) - Number(order.special_discount ?? 0) > 0 && (
             <div className="flex justify-between text-muted-foreground">
               <span>
-                {t("discount")}
+                {t("promo_discount")}
                 {order.voucher ? ` · ${order.voucher.code}` : ""}
               </span>
-              <span>-{formatMoney(order.discount_total, currency)}</span>
+              <span>
+                -
+                {formatMoney(
+                  Number(order.discount_total) - Number(order.special_discount ?? 0),
+                  currency,
+                )}
+              </span>
             </div>
           )}
           {order.gift && (

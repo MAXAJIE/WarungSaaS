@@ -68,6 +68,24 @@ function unitPrices(lines: OrderLine[], productId: string | null): number[] {
 }
 
 /**
+ * "Buy X get Y" has two legs: the product that must be bought
+ * (`required_product_id`) and the product given away (`reward_product_id`).
+ * Older vouchers only ever stored the reward product, so a missing buy leg
+ * falls back to the same product — that is the classic BOGO.
+ */
+function bogoSetup(v: VoucherRule) {
+  const freeId = v.reward_product_id ?? v.required_product_id;
+  const buyId = v.required_product_id ?? v.reward_product_id;
+  return {
+    buyId,
+    freeId,
+    buy: Math.max(1, v.buy_qty),
+    get: Math.max(1, v.get_qty),
+    sameProduct: buyId === freeId,
+  };
+}
+
+/**
  * Everything about the voucher that is not satisfied yet. An empty array means
  * the code may be redeemed as-is.
  */
@@ -84,7 +102,7 @@ export function voucherBlockers(v: VoucherRule, lines: OrderLine[]): Blocker[] {
     out.push({ kind: "min_spend", need: v.min_spend, have: money(subtotal) });
   if (v.min_items > 0 && itemCount < v.min_items)
     out.push({ kind: "min_items", need: v.min_items, have: itemCount });
-  if (v.required_product_id) {
+  if (v.required_product_id && v.reward !== "buy_x_get_y") {
     const have = unitsOf(lines, v.required_product_id);
     const need = Math.max(1, v.required_qty);
     if (have < need)
@@ -96,9 +114,15 @@ export function voucherBlockers(v: VoucherRule, lines: OrderLine[]): Blocker[] {
       out.push({ kind: "no_matching_item", productId: v.reward_product_id });
   }
   if (v.reward === "buy_x_get_y") {
-    const have = unitsOf(lines, v.reward_product_id);
-    const need = Math.max(1, v.buy_qty) + Math.max(1, v.get_qty);
-    if (have < need) out.push({ kind: "no_matching_item", productId: v.reward_product_id });
+    const { buyId, freeId, buy, get, sameProduct } = bogoSetup(v);
+    if (sameProduct) {
+      const have = unitsOf(lines, freeId);
+      if (have < buy + get) out.push({ kind: "no_matching_item", productId: freeId });
+    } else {
+      // "Buy X, get Y" needs both halves on the ticket.
+      if (unitsOf(lines, buyId) < buy) out.push({ kind: "no_matching_item", productId: buyId });
+      if (unitsOf(lines, freeId) < 1) out.push({ kind: "no_matching_item", productId: freeId });
+    }
   }
   return out;
 }
@@ -131,13 +155,22 @@ export function voucherDiscount(v: VoucherRule, lines: OrderLine[]): number {
       break;
     }
     case "buy_x_get_y": {
-      const prices = unitPrices(lines, v.reward_product_id);
-      const buy = Math.max(1, v.buy_qty);
-      const get = Math.max(1, v.get_qty);
-      const bundles = Math.floor(prices.length / (buy + get));
-      // The free units are the cheapest ones, which is the fair reading.
+      const { buyId, freeId, buy, get, sameProduct } = bogoSetup(v);
       let sum = 0;
-      for (let i = 0; i < bundles * get && i < prices.length; i++) sum += prices[i]!;
+      if (sameProduct) {
+        // Classic BOGO on one product: every (buy + get) units yields `get`
+        // free ones, and the cheapest units are the free ones.
+        const prices = unitPrices(lines, freeId);
+        const bundles = Math.floor(prices.length / (buy + get));
+        for (let i = 0; i < bundles * get && i < prices.length; i++) sum += prices[i]!;
+      } else {
+        // Buy X, get a *different* item Y free: how many X were bought decides
+        // how many Y units are free, and each free unit is worth Y's own price.
+        const bundles = Math.floor(unitsOf(lines, buyId) / buy);
+        const freePrices = unitPrices(lines, freeId);
+        const freeUnits = Math.min(bundles * get, freePrices.length);
+        for (let i = 0; i < freeUnits; i++) sum += freePrices[i]!;
+      }
       discount = sum;
       break;
     }

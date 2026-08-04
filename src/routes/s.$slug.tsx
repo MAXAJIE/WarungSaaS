@@ -651,16 +651,23 @@ function StorePage() {
                     <span>{t("subtotal")}</span>
                     <span>{formatMoney(liveOrder.subtotal, currency)}</span>
                   </div>
-                  {Number(liveOrder.discount_total ?? 0) > 0 && (
+                  {Number(liveOrder.discount_total ?? 0) -
+                    Number(liveOrder.special_discount ?? 0) >
+                    0 && (
                     <div className="flex justify-between gap-3 text-muted-foreground">
                       <span className="min-w-0">
-                        {t("discount")}
+                        {t("promo_discount")}
                         {liveOrder.vouchers?.length
                           ? ` · ${liveOrder.vouchers.map((v) => v.label || v.code).join(", ")}`
                           : ""}
                       </span>
                       <span className="shrink-0">
-                        -{formatMoney(liveOrder.discount_total, currency)}
+                        -
+                        {formatMoney(
+                          Number(liveOrder.discount_total ?? 0) -
+                            Number(liveOrder.special_discount ?? 0),
+                          currency,
+                        )}
                       </span>
                     </div>
                   )}
