@@ -223,6 +223,10 @@ export async function updateStoreImpl(
     order_code_template?: string;
     /** Spend that unlocks the counter's event discount. 0 disables it. */
     event_spend?: number;
+    /** Show this stall on the public /order directory. */
+    listed?: boolean;
+    /** Manual ordering for the directory's recommended row. Higher shows first. */
+    featured_rank?: number;
     /** Storage paths (product-photos bucket). Gift thresholds/event spend are
      * configured per-gift/per-promo elsewhere and are not edited here. */
     logo_path?: string | null;

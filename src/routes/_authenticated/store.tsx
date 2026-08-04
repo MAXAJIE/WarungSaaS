@@ -3,10 +3,12 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { Clock, ExternalLink, ImagePlus, Save, Store as StoreIcon } from "lucide-react";
+import { Clock, ExternalLink, ImagePlus, QrCode, Save, Store as StoreIcon } from "lucide-react";
 import { StaffShell, useStoreGuard } from "@/components/staff-shell";
 import { updateStore, uploadStoreImage } from "@/lib/staff.functions";
 import { ImageCropper } from "@/components/image-cropper";
+import { Modal } from "@/components/modal";
+import { QrImage } from "@/components/qr-code";
 import { useI18n } from "@/lib/i18n";
 
 export const Route = createFileRoute("/_authenticated/store")({
@@ -50,6 +52,9 @@ function StorePage() {
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [cropKind, setCropKind] = useState<"logo" | "cover" | null>(null);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [listed, setListed] = useState(true);
+  const [featuredRank, setFeaturedRank] = useState(0);
   const [cropFile, setCropFile] = useState<File | null>(null);
   const logoInput = useRef<HTMLInputElement | null>(null);
   const coverInput = useRef<HTMLInputElement | null>(null);
@@ -70,6 +75,9 @@ function StorePage() {
     setOpen(!!store.is_open);
     setTemplate(store.order_code_template ?? "{STALL}-{SEQ}");
     const images = store as unknown as StoreImages;
+    const directory = store as unknown as { listed?: boolean | null; featured_rank?: number | null };
+    setListed(directory.listed ?? true);
+    setFeaturedRank(Number(directory.featured_rank ?? 0));
     setLogoPath(images.logo_path ?? null);
     setCoverPath(images.cover_path ?? null);
   }, [store]);
@@ -94,6 +102,8 @@ function StorePage() {
           disclaimer,
           is_open: open,
           order_code_template: template,
+          listed,
+          featured_rank: featuredRank,
         },
       }),
     onSuccess: () => {
@@ -119,6 +129,11 @@ function StorePage() {
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  // Absolute link so the printed QR works off the phone that generated it.
+  const storeUrl = store?.slug
+    ? `${typeof window === "undefined" ? "" : window.location.origin}/s/${store.slug}`
+    : "";
 
   function pickFile(kind: "logo" | "cover", file: File | undefined) {
     if (!file) return;
@@ -149,6 +164,16 @@ function StorePage() {
                 )}
               </div>
             </div>
+            {store?.slug && (
+              <button
+                type="button"
+                onClick={() => setQrOpen(true)}
+                className="soft-press inline-flex shrink-0 items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs font-bold"
+              >
+                <QrCode className="size-4 text-primary" />
+                <span className="hidden sm:inline">{t("store_qr")}</span>
+              </button>
+            )}
           </div>
 
           {!isOwner ? (
@@ -271,6 +296,33 @@ function StorePage() {
                 />
               </label>
 
+              <div className="grid gap-3 rounded-2xl bg-muted/40 p-4">
+                <label className="flex items-center gap-2 text-sm font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={listed}
+                    onChange={(e) => setListed(e.target.checked)}
+                    className="size-4"
+                  />
+                  {t("store_listed")}
+                </label>
+                <label className="block">
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    {t("store_featured_rank")}
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={featuredRank}
+                    onChange={(e) => setFeaturedRank(Math.max(0, Number(e.target.value) || 0))}
+                    className={`mt-1 ${inputClass}`}
+                  />
+                  <span className="mt-1 block text-[11px] text-muted-foreground">
+                    {t("store_featured_rank_hint")}
+                  </span>
+                </label>
+              </div>
+
               <label className="flex items-center gap-2 text-sm font-semibold">
                 <input
                   type="checkbox"
@@ -293,6 +345,16 @@ function StorePage() {
           )}
         </section>
       </div>
+
+      <Modal open={qrOpen} onClose={() => setQrOpen(false)} title={t("store_qr")} size="sm">
+        <div className="flex flex-col items-center gap-3">
+          <QrImage value={storeUrl} size={240} />
+          <p className="break-all text-center text-xs font-semibold text-muted-foreground">
+            {storeUrl}
+          </p>
+          <p className="text-center text-xs text-muted-foreground">{t("store_qr_hint")}</p>
+        </div>
+      </Modal>
 
       {cropFile && cropKind && (
         <ImageCropper

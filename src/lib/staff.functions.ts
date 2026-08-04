@@ -71,6 +71,8 @@ export const updateStore = createServerFn({ method: "POST" })
       is_open?: boolean;
       order_code_template?: string;
       event_spend?: number;
+      listed?: boolean;
+      featured_rank?: number;
       logo_path?: string | null;
       cover_path?: string | null;
     }) => d,

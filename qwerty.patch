@@ -1,436 +1,653 @@
-From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
-From: Lovable <noreply@lovable.dev>
-Date: Tue, 4 Aug 2026 10:00:00 +0000
-Subject: [PATCH] Fix buy X get Y, event discount and discount totals
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lovable <dev@lovable.dev>
+Date: Tue, 4 Aug 2026 18:00:00 +0800
+Subject: [PATCH] Mobile layout fixes, store QR button and public stall directory
 
+- staff shell/modal: stop the sideways drift that clipped cards and menus
+- voucher popup: medium width instead of the widest size
+- customer stall header + revenue top products: phone-friendly layouts
+- store settings: QR button beside the /s link, plus directory listing and
+  recommended-position controls
+- /order: every registered stall, with square recommended widgets
 ---
- src/components/payment-review.tsx       | 30 ++++++++++---
- src/components/voucher-form.tsx         | 76 +++++++++++++++++++++++----------
- src/lib/i18n.tsx                        |  9 ++++
- src/lib/orders.server.ts                |  7 +--
- src/lib/vouchers.ts                     | 53 ++++++++++++++++++-----
- src/routes/_authenticated/dashboard.tsx | 33 +++++++++++---
- src/routes/s.$slug.tsx                  | 13 ++++--
- 7 files changed, 168 insertions(+), 53 deletions(-)
-
-diff --git a/src/components/payment-review.tsx b/src/components/payment-review.tsx
-index 301b485..37102e6 100644
---- a/src/components/payment-review.tsx
-+++ b/src/components/payment-review.tsx
-@@ -156,8 +156,17 @@ export function PaymentReview({
-   const attached = (order?.vouchers ?? []).map((v) => v.voucher);
-   /** Never trust a partially-loaded ticket: the list must always be iterable. */
-   const items = order?.items ?? [];
-+  /**
-+   * The counter must never see two different totals on one ticket, so every
-+   * number below is derived from the same breakdown instead of trusting a
-+   * possibly stale `total` column.
-+   */
-+  const specialDiscount = Math.max(0, Number(order?.special_discount ?? 0));
-+  const totalDiscount = Math.max(0, Number(order?.discount_total ?? 0));
-+  const promoDiscount = Math.max(0, totalDiscount - specialDiscount);
-+  const dueTotal = Math.max(0, Number(order?.subtotal ?? 0) - totalDiscount);
-   const eligibleGifts = order
--    ? gifts.filter((g) => g.is_active && Number(order.total) >= Number(g.threshold))
-+    ? gifts.filter((g) => g.is_active && dueTotal >= Number(g.threshold))
-     : [];
+diff --git a/src/components/modal.tsx b/src/components/modal.tsx
+index 716d9af..bbd075e 100644
+--- a/src/components/modal.tsx
++++ b/src/components/modal.tsx
+@@ -40,7 +40,7 @@ export function Modal({
+   }, [open, onClose]);
  
-   function settle(next: unknown) {
-@@ -300,7 +309,7 @@ export function PaymentReview({
-             className="soft-press flex-1 items-center justify-center gap-2 truncate rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground shadow-lift disabled:opacity-60"
-           >
-             <Check className="inline size-4" /> {t("approve_payment")} ·{" "}
--            {formatMoney(order.total, currency)}
-+            {formatMoney(dueTotal, currency)}
+   if (!open) return null;
+-  const width = size === "sm" ? "max-w-md" : size === "lg" ? "max-w-3xl" : "max-w-2xl";
++  const width = size === "sm" ? "max-w-md" : size === "lg" ? "max-w-2xl" : "max-w-xl";
+ 
+   return (
+     <div className="fixed inset-0 z-[60] flex items-end justify-center p-0 sm:items-center sm:p-6">
+@@ -54,7 +54,7 @@ export function Modal({
+         role="dialog"
+         aria-modal="true"
+         aria-label={title}
+-        className={`relative flex max-h-[92vh] w-full ${width} flex-col overflow-hidden rounded-t-3xl border border-border bg-card shadow-lift duration-200 animate-in fade-in slide-in-from-bottom-4 sm:rounded-3xl`}
++        className={`relative flex max-h-[88svh] w-full ${width} flex-col overflow-hidden rounded-t-3xl border border-border bg-card shadow-lift duration-200 animate-in fade-in slide-in-from-bottom-4 sm:rounded-3xl`}
+       >
+         <div className="flex items-start gap-3 border-b border-border/70 bg-muted/40 px-5 py-4">
+           <div className="min-w-0 flex-1">
+@@ -71,7 +71,9 @@ export function Modal({
            </button>
          </div>
-       }
-@@ -335,15 +344,24 @@ export function PaymentReview({
-             <span className="text-muted-foreground">{t("subtotal")}</span>
-             <span>{formatMoney(order.subtotal, currency)}</span>
-           </div>
--          {Number(order.discount_total) > 0 && (
-+          {promoDiscount > 0 && (
-             <div className="flex justify-between text-sm text-muted-foreground">
--              <span>{t("discount")}</span>
--              <span>-{formatMoney(order.discount_total, currency)}</span>
-+              <span>{t("promo_discount")}</span>
-+              <span>-{formatMoney(promoDiscount, currency)}</span>
-+            </div>
-+          )}
-+          {specialDiscount > 0 && (
-+            <div className="flex justify-between gap-3 text-sm text-muted-foreground">
-+              <span className="min-w-0 truncate">
-+                {t("special_discount")}
-+                {order.special_discount_reason ? ` · ${order.special_discount_reason}` : ""}
-+              </span>
-+              <span className="shrink-0">-{formatMoney(specialDiscount, currency)}</span>
-             </div>
-           )}
-           <div className="flex justify-between font-display text-lg font-bold">
-             <span>{t("total")}</span>
--            <span>{formatMoney(order.total, currency)}</span>
-+            <span>{formatMoney(dueTotal, currency)}</span>
-           </div>
-           <button
-             type="button"
+ 
+-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{children}</div>
++        <div className="min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-5 sm:py-5">
++          {children}
++        </div>
+ 
+         {footer && (
+           <div className="flex gap-2 border-t border-border/70 bg-muted/30 px-5 py-4">{footer}</div>
+diff --git a/src/components/staff-shell.tsx b/src/components/staff-shell.tsx
+index ae57128..d875a1f 100644
+--- a/src/components/staff-shell.tsx
++++ b/src/components/staff-shell.tsx
+@@ -174,7 +174,7 @@ export function StaffShell({
+ 
+   return (
+     <div
+-      className="min-h-screen bg-background text-foreground"
++      className="min-h-screen overflow-x-hidden bg-background text-foreground"
+       style={{ ["--rail" as string]: RAIL }}
+     >
+       <aside
+@@ -212,9 +212,9 @@ export function StaffShell({
+         </div>
+       </aside>
+ 
+-      <div className="md:pl-[72px]">
++      <div className="min-w-0 md:pl-[72px]">
+         <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur">
+-          <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
++          <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center gap-2 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
+             <div className="min-w-0 flex-1">
+               <p className="truncate font-display text-lg font-semibold leading-tight">{title}</p>
+               <p className="truncate text-xs text-muted-foreground">
+@@ -252,7 +252,7 @@ export function StaffShell({
+           </nav>
+         </header>
+ 
+-        <main className="mx-auto max-w-6xl px-4 py-5 duration-300 animate-in fade-in">
++        <main className="mx-auto w-full min-w-0 max-w-6xl px-4 py-5 duration-300 animate-in fade-in">
+           {children}
+         </main>
+       </div>
 diff --git a/src/components/voucher-form.tsx b/src/components/voucher-form.tsx
-index 4544cd6..badffb9 100644
+index badffb9..682c57f 100644
 --- a/src/components/voucher-form.tsx
 +++ b/src/components/voucher-form.tsx
-@@ -364,7 +364,14 @@ export function VoucherForm({
-             </Field>
+@@ -283,7 +283,7 @@ export function VoucherForm({
+         open={open}
+         onClose={onClose}
+         title={isEdit ? t("edit_voucher") : t("new_voucher")}
+-        size="lg"
++        size="md"
+         footer={
+           <>
+             <button
+diff --git a/src/lib/customer.functions.ts b/src/lib/customer.functions.ts
+index 7229b68..069f921 100644
+--- a/src/lib/customer.functions.ts
++++ b/src/lib/customer.functions.ts
+@@ -3,12 +3,15 @@ import {
+   cancelGuestOrderImpl,
+   getGuestOrderImpl,
+   getMenuImpl,
++  listStoresImpl,
+   saveCartImpl,
+   submitOrderImpl,
+   confirmReceiptImpl,
+   type CartItemInput,
+ } from "./customer.server";
  
-             {rewardNeedsProduct && (
--              <Field label={t("pick_product")} hint="Which menu item does this reward apply to?">
-+              <Field
-+                label={value.reward === "buy_x_get_y" ? t("free_product") : t("pick_product")}
-+                hint={
-+                  value.reward === "buy_x_get_y"
-+                    ? "Which item is given away for free (Y)?"
-+                    : "Which menu item does this reward apply to?"
-+                }
-+              >
-                 <ProductPicker
-                   value={value.reward_product_id}
-                   onChange={(v) => setValue({ ...value, reward_product_id: v })}
-@@ -387,6 +394,19 @@ export function VoucherForm({
-               </Field>
-             )}
- 
-+            {value.reward === "buy_x_get_y" && (
-+              <Field label={t("buy_product")} hint="Which item must the customer buy (X)?">
-+                <ProductPicker
-+                  value={value.required_product_id}
-+                  onChange={(v) =>
-+                    setValue({ ...value, required_product_id: v, required_qty: value.buy_qty })
-+                  }
-+                  products={products}
-+                  placeholder={t("buy_product")}
-+                />
-+              </Field>
-+            )}
++export const listStores = createServerFn({ method: "GET" }).handler(async () => listStoresImpl());
 +
-             {value.reward === "buy_x_get_y" && (
-               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                 <Field label={t("buy_qty")} hint="How many must the customer buy?">
-@@ -395,7 +415,13 @@ export function VoucherForm({
-                     min="1"
-                     placeholder="1"
-                     value={value.buy_qty}
--                    onChange={(e) => setValue({ ...value, buy_qty: Number(e.target.value) })}
-+                    onChange={(e) =>
-+                      setValue({
-+                        ...value,
-+                        buy_qty: Number(e.target.value),
-+                        required_qty: Number(e.target.value) || 1,
-+                      })
-+                    }
-                     className={inputCls}
-                   />
-                 </Field>
-@@ -497,27 +523,31 @@ export function VoucherForm({
-                 />
-               </Field>
-             </div>
--            <Field
--              label={t("required_product")}
--              hint="Require a specific product to be in the order."
--            >
--              <ProductPicker
--                value={value.required_product_id}
--                onChange={(v) => setValue({ ...value, required_product_id: v })}
--                products={products}
--                placeholder={t("none")}
--              />
--            </Field>
--            {value.required_product_id && (
--              <Field label={t("required_qty")}>
--                <input
--                  type="number"
--                  min="1"
--                  value={value.required_qty}
--                  onChange={(e) => setValue({ ...value, required_qty: Number(e.target.value) })}
--                  className={inputCls}
--                />
--              </Field>
-+            {value.reward !== "buy_x_get_y" && (
-+              <>
-+                <Field
-+                  label={t("required_product")}
-+                  hint="Require a specific product to be in the order."
-+                >
-+                  <ProductPicker
-+                    value={value.required_product_id}
-+                    onChange={(v) => setValue({ ...value, required_product_id: v })}
-+                    products={products}
-+                    placeholder={t("none")}
-+                  />
-+                </Field>
-+                {value.required_product_id && (
-+                  <Field label={t("required_qty")}>
-+                    <input
-+                      type="number"
-+                      min="1"
-+                      value={value.required_qty}
-+                      onChange={(e) => setValue({ ...value, required_qty: Number(e.target.value) })}
-+                      className={inputCls}
-+                    />
-+                  </Field>
-+                )}
-+              </>
-             )}
-             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-               <Field label={t("usage_limit")} hint="0 = unlimited uses.">
-diff --git a/src/lib/i18n.tsx b/src/lib/i18n.tsx
-index d341916..8ee666e 100644
---- a/src/lib/i18n.tsx
-+++ b/src/lib/i18n.tsx
-@@ -400,6 +400,7 @@ const en: Dict = {
-   remove_item: "Remove",
-   payment_review: "Review payment",
-   special_discount: "Event discount",
-+  promo_discount: "Promo discount",
-   discount_reason_label: "Reason",
-   discount_amount_label: "Discount amount",
-   apply_discount: "Apply discount",
-@@ -495,6 +496,8 @@ const en: Dict = {
-   gift_product: "Which dish is the gift",
-   pick_gift_product: "Choose a dish",
-   pick_product: "Choose a dish",
-+  buy_product: "Buy this dish",
-+  free_product: "Free dish",
-   edit_gift: "Edit gift",
-   edit_voucher: "Edit voucher",
-   stock: "Stock",
-@@ -826,6 +829,7 @@ const zh: Dict = {
-   remove_item: "移除",
-   payment_review: "确认付款",
-   special_discount: "活动折扣",
-+  promo_discount: "促销折扣",
-   discount_reason_label: "原因",
-   discount_amount_label: "折扣金额",
-   apply_discount: "套用折扣",
-@@ -978,6 +982,8 @@ const zh: Dict = {
-   gift_product: "赠品是哪道菜",
-   pick_gift_product: "选择一道菜",
-   pick_product: "选择一道菜",
-+  buy_product: "购买此菜品",
-+  free_product: "赠送菜品",
-   edit_gift: "编辑赠品",
-   edit_voucher: "编辑优惠券",
-   stock: "库存",
-@@ -1308,6 +1314,7 @@ const ms: Dict = {
-   remove_item: "Buang",
-   payment_review: "Semak pembayaran",
-   special_discount: "Diskaun acara",
-+  promo_discount: "Diskaun promosi",
-   discount_reason_label: "Sebab",
-   discount_amount_label: "Jumlah diskaun",
-   apply_discount: "Guna diskaun",
-@@ -1464,6 +1471,8 @@ const ms: Dict = {
-   gift_product: "Hidangan mana hadiahnya",
-   pick_gift_product: "Pilih hidangan",
-   pick_product: "Pilih hidangan",
-+  buy_product: "Beli hidangan ini",
-+  free_product: "Hidangan percuma",
-   edit_gift: "Sunting hadiah",
-   edit_voucher: "Sunting baucar",
-   stock: "Stok",
-diff --git a/src/lib/orders.server.ts b/src/lib/orders.server.ts
-index 4106da5..b513120 100644
---- a/src/lib/orders.server.ts
-+++ b/src/lib/orders.server.ts
-@@ -701,11 +701,8 @@ export async function setSpecialDiscountImpl(
-   if (order.status !== "submitted")
-     throw new Error("A discount can only be added before payment is approved.");
+ export const getMenu = createServerFn({ method: "GET" })
+   .inputValidator((d: { slug: string }) => d)
+   .handler(async ({ data }) => getMenuImpl(data));
+diff --git a/src/lib/customer.server.ts b/src/lib/customer.server.ts
+index fcb4d32..40e92a9 100644
+--- a/src/lib/customer.server.ts
++++ b/src/lib/customer.server.ts
+@@ -58,6 +58,68 @@ async function findStoreBySlug(slug: string) {
  
--  const threshold = Number((store as { event_spend?: number | string }).event_spend ?? 0);
--  if (threshold <= 0) throw new Error("No event discount is running.");
--  if (Number(order.subtotal) < threshold)
--    throw new Error("This order has not reached the event spend yet.");
--
-+  // An event discount is a manual, reason-tagged deduction: the counter may
-+  // give it on any ticket, so there is no spend threshold to clear.
-   const amount = Math.max(0, Math.min(Number(order.subtotal), Number(data.amount) || 0));
-   const reason = (data.reason ?? "").trim().slice(0, 120);
-   if (amount > 0 && !reason) throw new Error("Please give a reason for the discount.");
-diff --git a/src/lib/vouchers.ts b/src/lib/vouchers.ts
-index 7304188..29f0dfb 100644
---- a/src/lib/vouchers.ts
-+++ b/src/lib/vouchers.ts
-@@ -67,6 +67,24 @@ function unitPrices(lines: OrderLine[], productId: string | null): number[] {
-   return out.sort((a, b) => a - b);
- }
  
+ 
++export type DirectoryStall = {
++  slug: string;
++  name: string;
++  tagline: string | null;
++  is_open: boolean;
++  logo_url: string | null;
++  cover_url: string | null;
++  featured_rank: number;
++};
++
 +/**
-+ * "Buy X get Y" has two legs: the product that must be bought
-+ * (`required_product_id`) and the product given away (`reward_product_id`).
-+ * Older vouchers only ever stored the reward product, so a missing buy leg
-+ * falls back to the same product — that is the classic BOGO.
++ * Every registered stall, for the public /order directory. `listed` and
++ * `featured_rank` arrive with the store-directory migration; on a stall that
++ * has not run it yet the extra select simply fails and everything is treated
++ * as listed with no manual ranking.
 + */
-+function bogoSetup(v: VoucherRule) {
-+  const freeId = v.reward_product_id ?? v.required_product_id;
-+  const buyId = v.required_product_id ?? v.reward_product_id;
-+  return {
-+    buyId,
-+    freeId,
-+    buy: Math.max(1, v.buy_qty),
-+    get: Math.max(1, v.get_qty),
-+    sameProduct: buyId === freeId,
++export async function listStoresImpl(): Promise<{ stalls: DirectoryStall[] }> {
++  const { data: base } = await supabaseAdmin
++    .from("stores")
++    .select("id,name,slug,tagline,is_open")
++    .order("name");
++
++  type Extra = {
++    id: string;
++    logo_path: string | null;
++    cover_path: string | null;
++    featured_rank?: number | null;
++    listed?: boolean | null;
 +  };
++  let extras: Extra[] = [];
++  const full = await looseDb()
++    .from("stores")
++    .select("id,logo_path,cover_path,featured_rank,listed");
++  if (full.error) {
++    const slim = await looseDb().from("stores").select("id,logo_path,cover_path");
++    extras = (slim.data ?? []) as Extra[];
++  } else {
++    extras = (full.data ?? []) as Extra[];
++  }
++  const byId = new Map(extras.map((e) => [e.id, e]));
++
++  const stalls = (base ?? [])
++    .map((s) => {
++      const extra = byId.get(s.id);
++      return {
++        slug: s.slug,
++        name: s.name,
++        tagline: s.tagline ?? null,
++        is_open: !!s.is_open,
++        logo_url: productPhotoUrl(extra?.logo_path ?? null),
++        cover_url: productPhotoUrl(extra?.cover_path ?? null),
++        featured_rank: Number(extra?.featured_rank ?? 0),
++        listed: extra?.listed ?? true,
++      };
++    })
++    .filter((s) => s.listed !== false)
++    .map(({ listed: _listed, ...s }) => s)
++    .sort((a, b) => b.featured_rank - a.featured_rank || a.name.localeCompare(b.name));
++
++  return { stalls };
 +}
 +
- /**
-  * Everything about the voucher that is not satisfied yet. An empty array means
-  * the code may be redeemed as-is.
-@@ -84,7 +102,7 @@ export function voucherBlockers(v: VoucherRule, lines: OrderLine[]): Blocker[] {
-     out.push({ kind: "min_spend", need: v.min_spend, have: money(subtotal) });
-   if (v.min_items > 0 && itemCount < v.min_items)
-     out.push({ kind: "min_items", need: v.min_items, have: itemCount });
--  if (v.required_product_id) {
-+  if (v.required_product_id && v.reward !== "buy_x_get_y") {
-     const have = unitsOf(lines, v.required_product_id);
-     const need = Math.max(1, v.required_qty);
-     if (have < need)
-@@ -96,9 +114,15 @@ export function voucherBlockers(v: VoucherRule, lines: OrderLine[]): Blocker[] {
-       out.push({ kind: "no_matching_item", productId: v.reward_product_id });
-   }
-   if (v.reward === "buy_x_get_y") {
--    const have = unitsOf(lines, v.reward_product_id);
--    const need = Math.max(1, v.buy_qty) + Math.max(1, v.get_qty);
--    if (have < need) out.push({ kind: "no_matching_item", productId: v.reward_product_id });
-+    const { buyId, freeId, buy, get, sameProduct } = bogoSetup(v);
-+    if (sameProduct) {
-+      const have = unitsOf(lines, freeId);
-+      if (have < buy + get) out.push({ kind: "no_matching_item", productId: freeId });
-+    } else {
-+      // "Buy X, get Y" needs both halves on the ticket.
-+      if (unitsOf(lines, buyId) < buy) out.push({ kind: "no_matching_item", productId: buyId });
-+      if (unitsOf(lines, freeId) < 1) out.push({ kind: "no_matching_item", productId: freeId });
-+    }
-   }
-   return out;
- }
-@@ -131,13 +155,22 @@ export function voucherDiscount(v: VoucherRule, lines: OrderLine[]): number {
-       break;
-     }
-     case "buy_x_get_y": {
--      const prices = unitPrices(lines, v.reward_product_id);
--      const buy = Math.max(1, v.buy_qty);
--      const get = Math.max(1, v.get_qty);
--      const bundles = Math.floor(prices.length / (buy + get));
--      // The free units are the cheapest ones, which is the fair reading.
-+      const { buyId, freeId, buy, get, sameProduct } = bogoSetup(v);
-       let sum = 0;
--      for (let i = 0; i < bundles * get && i < prices.length; i++) sum += prices[i]!;
-+      if (sameProduct) {
-+        // Classic BOGO on one product: every (buy + get) units yields `get`
-+        // free ones, and the cheapest units are the free ones.
-+        const prices = unitPrices(lines, freeId);
-+        const bundles = Math.floor(prices.length / (buy + get));
-+        for (let i = 0; i < bundles * get && i < prices.length; i++) sum += prices[i]!;
-+      } else {
-+        // Buy X, get a *different* item Y free: how many X were bought decides
-+        // how many Y units are free, and each free unit is worth Y's own price.
-+        const bundles = Math.floor(unitsOf(lines, buyId) / buy);
-+        const freePrices = unitPrices(lines, freeId);
-+        const freeUnits = Math.min(bundles * get, freePrices.length);
-+        for (let i = 0; i < freeUnits; i++) sum += freePrices[i]!;
-+      }
-       discount = sum;
-       break;
-     }
-diff --git a/src/routes/_authenticated/dashboard.tsx b/src/routes/_authenticated/dashboard.tsx
-index 97681f5..faaba62 100644
---- a/src/routes/_authenticated/dashboard.tsx
-+++ b/src/routes/_authenticated/dashboard.tsx
-@@ -402,13 +402,28 @@ function OrderCard({
-       {order.note && <p className="mt-2 text-xs italic text-muted-foreground">“{order.note}”</p>}
+ async function storeBySlug(slug: string) {
+   const store = await findStoreBySlug(slug);
+   if (!store) throw new Error("Store not found.");
+diff --git a/src/lib/i18n.tsx b/src/lib/i18n.tsx
+index 8ee666e..13cdfda 100644
+--- a/src/lib/i18n.tsx
++++ b/src/lib/i18n.tsx
+@@ -90,6 +90,18 @@ const en: Dict = {
+   landing_step_3: "Show your order QR at the counter, then pick up when called.",
+   landing_no_recent: "No stalls visited yet",
+   landing_no_recent_hint: "Once you scan a stall it is kept here for one tap next time.",
++  stall_open_badge: "Open",
++  stall_closed_badge: "Closed",
++  landing_recommended: "Recommended restaurants",
++  landing_recommended_hint: "Hand-picked stalls to try today.",
++  landing_all_stalls: "All restaurants",
++  landing_no_stalls: "No stalls yet",
++  landing_no_stalls_hint: "Stalls appear here as soon as they register.",
++  store_qr: "Store QR",
++  store_qr_hint: "Print or share this code so customers land on your menu.",
++  store_listed: "Show my stall in the customer directory",
++  store_featured_rank: "Recommended position",
++  store_featured_rank_hint: "Higher numbers appear first. 0 leaves it unranked.",
+   landing_not_found: "That code did not point at a stall we know.",
+   my_order: "My order",
+   notifications: "Notifications",
+@@ -932,6 +944,18 @@ const zh: Dict = {
+   landing_step_3: "在柜台出示订单二维码，叫号后领取。",
+   landing_no_recent: "还没有到访过任何摊位",
+   landing_no_recent_hint: "扫描摊位后会保存在这里，方便下次一键进入。",
++  stall_open_badge: "营业中",
++  stall_closed_badge: "休息中",
++  landing_recommended: "推荐餐厅",
++  landing_recommended_hint: "今天值得一试的摊位。",
++  landing_all_stalls: "全部餐厅",
++  landing_no_stalls: "暂时没有摊位",
++  landing_no_stalls_hint: "摊位注册后会显示在这里。",
++  store_qr: "店铺二维码",
++  store_qr_hint: "打印或分享此二维码，顾客扫码即可打开菜单。",
++  store_listed: "在顾客目录中显示我的摊位",
++  store_featured_rank: "推荐排序",
++  store_featured_rank_hint: "数字越大越靠前，0 表示不排序。",
+   landing_not_found: "该代码没有对应任何摊位。",
+   my_order: "我的订单",
+   section_reward: "顾客获得什么",
+@@ -1421,6 +1445,18 @@ const ms: Dict = {
+   landing_step_3: "Tunjukkan QR pesanan anda di kaunter, kemudian ambil apabila dipanggil.",
+   landing_no_recent: "Belum ada gerai dilawati",
+   landing_no_recent_hint: "Selepas anda imbas satu gerai, ia disimpan di sini untuk akses pantas.",
++  stall_open_badge: "Buka",
++  stall_closed_badge: "Tutup",
++  landing_recommended: "Restoran disyorkan",
++  landing_recommended_hint: "Gerai pilihan untuk dicuba hari ini.",
++  landing_all_stalls: "Semua restoran",
++  landing_no_stalls: "Belum ada gerai",
++  landing_no_stalls_hint: "Gerai akan muncul di sini sebaik sahaja mendaftar.",
++  store_qr: "Kod QR kedai",
++  store_qr_hint: "Cetak atau kongsi kod ini supaya pelanggan terus ke menu anda.",
++  store_listed: "Papar gerai saya dalam direktori pelanggan",
++  store_featured_rank: "Kedudukan disyorkan",
++  store_featured_rank_hint: "Nombor lebih besar muncul dahulu. 0 bermaksud tiada kedudukan.",
+   landing_not_found: "Kod itu tidak merujuk kepada mana-mana gerai yang kami kenali.",
+   my_order: "Pesanan saya",
+   section_reward: "Apa yang pelanggan dapat",
+diff --git a/src/lib/staff.functions.ts b/src/lib/staff.functions.ts
+index cb4f538..3f36453 100644
+--- a/src/lib/staff.functions.ts
++++ b/src/lib/staff.functions.ts
+@@ -71,6 +71,8 @@ export const updateStore = createServerFn({ method: "POST" })
+       is_open?: boolean;
+       order_code_template?: string;
+       event_spend?: number;
++      listed?: boolean;
++      featured_rank?: number;
+       logo_path?: string | null;
+       cover_path?: string | null;
+     }) => d,
+diff --git a/src/lib/staff.server.ts b/src/lib/staff.server.ts
+index 7127973..992fbdf 100644
+--- a/src/lib/staff.server.ts
++++ b/src/lib/staff.server.ts
+@@ -223,6 +223,10 @@ export async function updateStoreImpl(
+     order_code_template?: string;
+     /** Spend that unlocks the counter's event discount. 0 disables it. */
+     event_spend?: number;
++    /** Show this stall on the public /order directory. */
++    listed?: boolean;
++    /** Manual ordering for the directory's recommended row. Higher shows first. */
++    featured_rank?: number;
+     /** Storage paths (product-photos bucket). Gift thresholds/event spend are
+      * configured per-gift/per-promo elsewhere and are not edited here. */
+     logo_path?: string | null;
+diff --git a/src/routes/_authenticated/analytics.tsx b/src/routes/_authenticated/analytics.tsx
+index e031fee..308d8d4 100644
+--- a/src/routes/_authenticated/analytics.tsx
++++ b/src/routes/_authenticated/analytics.tsx
+@@ -180,7 +180,37 @@ function AnalyticsPage() {
  
-       <div className="mt-3 space-y-0.5 border-t border-border pt-2 text-sm">
--        {Number(order.discount_total) > 0 && (
-+        {Number(order.discount_total) - Number(order.special_discount ?? 0) > 0 && (
-           <div className="flex justify-between text-muted-foreground">
-             <span>
--              {t("discount")}
-+              {t("promo_discount")}
-               {order.voucher ? ` · ${order.voucher.code}` : ""}
-             </span>
--            <span>-{formatMoney(order.discount_total, currency)}</span>
-+            <span>
-+              -
-+              {formatMoney(
-+                Number(order.discount_total) - Number(order.special_discount ?? 0),
-+                currency,
-+              )}
-+            </span>
-+          </div>
-+        )}
-+        {Number(order.special_discount ?? 0) > 0 && (
-+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 text-muted-foreground">
-+            <span className="min-w-0 truncate">
-+              {t("special_discount")}
-+              {order.special_discount_reason ? ` · ${order.special_discount_reason}` : ""}
-+            </span>
-+            <span className="shrink-0">-{formatMoney(order.special_discount ?? 0, currency)}</span>
+           <div className="cozy-card p-5">
+             <h2 className="font-display text-lg font-bold">{t("top_products")}</h2>
+-            <table className="mt-3 w-full text-sm">
++
++            {/* Phones get a stacked card per product: the four-column table used
++                to wrap money values onto two lines and read as a jumble. */}
++            <ul className="mt-3 space-y-2 sm:hidden">
++              {data.products.map((p, i) => (
++                <li key={p.name} className="rounded-2xl border border-border bg-muted/30 p-3">
++                  <div className="flex min-w-0 items-start gap-2">
++                    <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
++                      {i + 1}
++                    </span>
++                    <p className="min-w-0 flex-1 text-sm font-semibold leading-snug">{p.name}</p>
++                  </div>
++                  <dl className="mt-2 grid grid-cols-3 gap-2 text-center">
++                    {[
++                      { k: t("qty"), v: String(p.qty) },
++                      { k: t("revenue"), v: formatMoney(p.revenue, data.currency) },
++                      { k: t("profit"), v: formatMoney(p.profit, data.currency) },
++                    ].map((cell) => (
++                      <div key={cell.k} className="min-w-0 rounded-xl bg-card px-2 py-1.5">
++                        <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
++                          {cell.k}
++                        </dt>
++                        <dd className="truncate text-xs font-bold tabular-nums">{cell.v}</dd>
++                      </div>
++                    ))}
++                  </dl>
++                </li>
++              ))}
++            </ul>
++
++            <table className="mt-3 hidden w-full text-sm sm:table">
+               <thead>
+                 <tr className="text-left text-xs uppercase text-muted-foreground">
+                   <th className="pb-2">{t("product_name")}</th>
+@@ -193,9 +223,11 @@ function AnalyticsPage() {
+                 {data.products.map((p) => (
+                   <tr key={p.name} className="border-t border-border">
+                     <td className="py-2">{p.name}</td>
+-                    <td className="py-2 text-right">{p.qty}</td>
+-                    <td className="py-2 text-right">{formatMoney(p.revenue, data.currency)}</td>
+-                    <td className="py-2 text-right font-semibold">
++                    <td className="py-2 text-right tabular-nums">{p.qty}</td>
++                    <td className="py-2 text-right tabular-nums">
++                      {formatMoney(p.revenue, data.currency)}
++                    </td>
++                    <td className="py-2 text-right font-semibold tabular-nums">
+                       {formatMoney(p.profit, data.currency)}
+                     </td>
+                   </tr>
+diff --git a/src/routes/_authenticated/store.tsx b/src/routes/_authenticated/store.tsx
+index 785f7c5..42f1120 100644
+--- a/src/routes/_authenticated/store.tsx
++++ b/src/routes/_authenticated/store.tsx
+@@ -3,10 +3,12 @@ import { useEffect, useRef, useState } from "react";
+ import { useMutation, useQueryClient } from "@tanstack/react-query";
+ import { useServerFn } from "@tanstack/react-start";
+ import { toast } from "sonner";
+-import { Clock, ExternalLink, ImagePlus, Save, Store as StoreIcon } from "lucide-react";
++import { Clock, ExternalLink, ImagePlus, QrCode, Save, Store as StoreIcon } from "lucide-react";
+ import { StaffShell, useStoreGuard } from "@/components/staff-shell";
+ import { updateStore, uploadStoreImage } from "@/lib/staff.functions";
+ import { ImageCropper } from "@/components/image-cropper";
++import { Modal } from "@/components/modal";
++import { QrImage } from "@/components/qr-code";
+ import { useI18n } from "@/lib/i18n";
+ 
+ export const Route = createFileRoute("/_authenticated/store")({
+@@ -50,6 +52,9 @@ function StorePage() {
+   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+   const [coverPreview, setCoverPreview] = useState<string | null>(null);
+   const [cropKind, setCropKind] = useState<"logo" | "cover" | null>(null);
++  const [qrOpen, setQrOpen] = useState(false);
++  const [listed, setListed] = useState(true);
++  const [featuredRank, setFeaturedRank] = useState(0);
+   const [cropFile, setCropFile] = useState<File | null>(null);
+   const logoInput = useRef<HTMLInputElement | null>(null);
+   const coverInput = useRef<HTMLInputElement | null>(null);
+@@ -70,6 +75,9 @@ function StorePage() {
+     setOpen(!!store.is_open);
+     setTemplate(store.order_code_template ?? "{STALL}-{SEQ}");
+     const images = store as unknown as StoreImages;
++    const directory = store as unknown as { listed?: boolean | null; featured_rank?: number | null };
++    setListed(directory.listed ?? true);
++    setFeaturedRank(Number(directory.featured_rank ?? 0));
+     setLogoPath(images.logo_path ?? null);
+     setCoverPath(images.cover_path ?? null);
+   }, [store]);
+@@ -94,6 +102,8 @@ function StorePage() {
+           disclaimer,
+           is_open: open,
+           order_code_template: template,
++          listed,
++          featured_rank: featuredRank,
+         },
+       }),
+     onSuccess: () => {
+@@ -120,6 +130,11 @@ function StorePage() {
+     onError: (e: Error) => toast.error(e.message),
+   });
+ 
++  // Absolute link so the printed QR works off the phone that generated it.
++  const storeUrl = store?.slug
++    ? `${typeof window === "undefined" ? "" : window.location.origin}/s/${store.slug}`
++    : "";
++
+   function pickFile(kind: "logo" | "cover", file: File | undefined) {
+     if (!file) return;
+     setCropKind(kind);
+@@ -149,6 +164,16 @@ function StorePage() {
+                 )}
+               </div>
+             </div>
++            {store?.slug && (
++              <button
++                type="button"
++                onClick={() => setQrOpen(true)}
++                className="soft-press inline-flex shrink-0 items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs font-bold"
++              >
++                <QrCode className="size-4 text-primary" />
++                <span className="hidden sm:inline">{t("store_qr")}</span>
++              </button>
++            )}
            </div>
-         )}
-         {order.gift && (
-@@ -544,13 +559,19 @@ function OrderDetailModal({
-               </span>
+ 
+           {!isOwner ? (
+@@ -271,6 +296,33 @@ function StorePage() {
+                 />
+               </label>
+ 
++              <div className="grid gap-3 rounded-2xl bg-muted/40 p-4">
++                <label className="flex items-center gap-2 text-sm font-semibold">
++                  <input
++                    type="checkbox"
++                    checked={listed}
++                    onChange={(e) => setListed(e.target.checked)}
++                    className="size-4"
++                  />
++                  {t("store_listed")}
++                </label>
++                <label className="block">
++                  <span className="text-xs font-semibold text-muted-foreground">
++                    {t("store_featured_rank")}
++                  </span>
++                  <input
++                    type="number"
++                    min={0}
++                    value={featuredRank}
++                    onChange={(e) => setFeaturedRank(Math.max(0, Number(e.target.value) || 0))}
++                    className={`mt-1 ${inputClass}`}
++                  />
++                  <span className="mt-1 block text-[11px] text-muted-foreground">
++                    {t("store_featured_rank_hint")}
++                  </span>
++                </label>
++              </div>
++
+               <label className="flex items-center gap-2 text-sm font-semibold">
+                 <input
+                   type="checkbox"
+@@ -294,6 +346,16 @@ function StorePage() {
+         </section>
+       </div>
+ 
++      <Modal open={qrOpen} onClose={() => setQrOpen(false)} title={t("store_qr")} size="sm">
++        <div className="flex flex-col items-center gap-3">
++          <QrImage value={storeUrl} size={240} />
++          <p className="break-all text-center text-xs font-semibold text-muted-foreground">
++            {storeUrl}
++          </p>
++          <p className="text-center text-xs text-muted-foreground">{t("store_qr_hint")}</p>
++        </div>
++      </Modal>
++
+       {cropFile && cropKind && (
+         <ImageCropper
+           file={cropFile}
+diff --git a/src/routes/order.tsx b/src/routes/order.tsx
+index 1f276c3..88cc2e5 100644
+--- a/src/routes/order.tsx
++++ b/src/routes/order.tsx
+@@ -1,7 +1,10 @@
+ import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+ import { useEffect, useState } from "react";
++import { useQuery } from "@tanstack/react-query";
++import { useServerFn } from "@tanstack/react-start";
+ import { ScanLine, Soup, Store } from "lucide-react";
+ import { EmptyState } from "@/components/empty-state";
++import { listStores } from "@/lib/customer.functions";
+ import { LanguageSwitcher } from "@/components/language-switcher";
+ import { Modal } from "@/components/modal";
+ import { QrScannerBox } from "@/components/qr-scanner-box";
+@@ -38,6 +41,13 @@ function CustomerLanding() {
+   const navigate = useNavigate();
+   const [scanOpen, setScanOpen] = useState(false);
+   const [recent, setRecent] = useState<RecentStall[]>([]);
++  const fetchStalls = useServerFn(listStores);
++  const stalls = useQuery({ queryKey: ["stalls"], queryFn: () => fetchStalls({}) });
++  const all = stalls.data?.stalls ?? [];
++  // "Recommended" is the owner-controlled top of the directory: anything with a
++  // manual rank, and otherwise simply the first few stalls.
++  const ranked = all.filter((s) => s.featured_rank > 0);
++  const recommended = (ranked.length ? ranked : all).slice(0, 6);
+ 
+   useEffect(() => {
+     try {
+@@ -76,12 +86,111 @@ function CustomerLanding() {
+         </section>
+ 
+         <section className="cozy-card p-5">
+-          <h2 className="font-display text-lg font-bold">{t("landing_recent")}</h2>
+-          {recent.length === 0 ? (
++          <h2 className="font-display text-lg font-bold">{t("landing_recommended")}</h2>
++          <p className="mt-1 text-xs text-muted-foreground">{t("landing_recommended_hint")}</p>
++          {recommended.length === 0 ? (
+             <div className="mt-4">
+-              <EmptyState title={t("landing_no_recent")} hint={t("landing_no_recent_hint")} />
++              <EmptyState title={t("landing_no_stalls")} hint={t("landing_no_stalls_hint")} />
              </div>
-           )}
--          {Number(order.discount_total) > 0 && (
-+          {Number(order.discount_total) - Number(order.special_discount ?? 0) > 0 && (
-             <div className="flex justify-between text-muted-foreground">
-               <span>
--                {t("discount")}
-+                {t("promo_discount")}
-                 {order.voucher ? ` · ${order.voucher.code}` : ""}
-               </span>
--              <span>-{formatMoney(order.discount_total, currency)}</span>
-+              <span>
-+                -
-+                {formatMoney(
-+                  Number(order.discount_total) - Number(order.special_discount ?? 0),
-+                  currency,
-+                )}
-+              </span>
-             </div>
-           )}
-           {order.gift && (
+           ) : (
++            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
++              {recommended.map((s) => (
++                <Link
++                  key={s.slug}
++                  to="/s/$slug"
++                  params={{ slug: s.slug }}
++                  className="group relative aspect-square overflow-hidden rounded-3xl border border-border bg-muted shadow-cozy transition-transform duration-300 hover:-translate-y-1 hover:shadow-lift focus-visible:-translate-y-1"
++                >
++                  {s.cover_url ? (
++                    <img
++                      src={s.cover_url}
++                      alt=""
++                      className="absolute inset-0 size-full object-cover transition-transform duration-500 group-hover:scale-110"
++                    />
++                  ) : (
++                    <span className="absolute inset-0 bg-gradient-to-br from-primary/25 to-secondary" />
++                  )}
++                  <span className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/25 to-transparent" />
++                  <span className="absolute inset-x-0 bottom-0 flex items-end gap-2 p-3">
++                    {s.logo_url ? (
++                      <img
++                        src={s.logo_url}
++                        alt=""
++                        className="size-9 shrink-0 rounded-xl border border-white/40 object-cover"
++                      />
++                    ) : (
++                      <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/20 text-white">
++                        <Store className="size-4" />
++                      </span>
++                    )}
++                    <span className="min-w-0 flex-1">
++                      <span className="block truncate text-sm font-bold text-white drop-shadow">
++                        {s.name}
++                      </span>
++                      <span className="block text-[10px] font-semibold uppercase tracking-wide text-white/80">
++                        {s.is_open ? t("stall_open_badge") : t("stall_closed_badge")}
++                      </span>
++                    </span>
++                  </span>
++                  {/* Description slides up on hover (and is always shown to keyboard focus). */}
++                  <span className="pointer-events-none absolute inset-0 flex translate-y-3 items-center justify-center bg-black/65 p-3 text-center text-xs font-semibold text-white opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100">
++                    {s.tagline || t("landing_recommended_hint")}
++                  </span>
++                </Link>
++              ))}
++            </div>
++          )}
++        </section>
++
++        <section className="cozy-card p-5">
++          <h2 className="font-display text-lg font-bold">{t("landing_all_stalls")}</h2>
++          {all.length === 0 ? (
++            <div className="mt-4">
++              <EmptyState title={t("landing_no_stalls")} hint={t("landing_no_stalls_hint")} />
++            </div>
++          ) : (
++            <ul className="mt-4 space-y-2">
++              {all.map((s) => (
++                <li key={s.slug}>
++                  <Link
++                    to="/s/$slug"
++                    params={{ slug: s.slug }}
++                    className="soft-press flex items-center gap-3 rounded-2xl border border-border bg-card px-3 py-2.5"
++                  >
++                    {s.logo_url ? (
++                      <img src={s.logo_url} alt="" className="size-10 shrink-0 rounded-xl object-cover" />
++                    ) : (
++                      <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
++                        <Store className="size-4" />
++                      </span>
++                    )}
++                    <span className="min-w-0 flex-1">
++                      <span className="block truncate text-sm font-bold">{s.name}</span>
++                      {s.tagline && (
++                        <span className="block truncate text-xs text-muted-foreground">
++                          {s.tagline}
++                        </span>
++                      )}
++                    </span>
++                    <span
++                      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
++                        s.is_open
++                          ? "bg-primary/10 text-primary"
++                          : "bg-muted text-muted-foreground"
++                      }`}
++                    >
++                      {s.is_open ? t("stall_open_badge") : t("stall_closed_badge")}
++                    </span>
++                  </Link>
++                </li>
++              ))}
++            </ul>
++          )}
++        </section>
++
++        {recent.length > 0 && (
++          <section className="cozy-card p-5">
++            <h2 className="font-display text-lg font-bold">{t("landing_recent")}</h2>
+             <ul className="mt-4 space-y-2">
+               {recent.map((r) => (
+                 <li key={r.slug}>
+@@ -96,8 +205,8 @@ function CustomerLanding() {
+                 </li>
+               ))}
+             </ul>
+-          )}
+-        </section>
++          </section>
++        )}
+ 
+         <section className="cozy-card p-5">
+           <h2 className="font-display text-lg font-bold">{t("landing_how")}</h2>
 diff --git a/src/routes/s.$slug.tsx b/src/routes/s.$slug.tsx
-index a8da808..816522e 100644
+index 816522e..71f343c 100644
 --- a/src/routes/s.$slug.tsx
 +++ b/src/routes/s.$slug.tsx
-@@ -651,16 +651,23 @@ function StorePage() {
-                     <span>{t("subtotal")}</span>
-                     <span>{formatMoney(liveOrder.subtotal, currency)}</span>
-                   </div>
--                  {Number(liveOrder.discount_total ?? 0) > 0 && (
-+                  {Number(liveOrder.discount_total ?? 0) -
-+                    Number(liveOrder.special_discount ?? 0) >
-+                    0 && (
-                     <div className="flex justify-between gap-3 text-muted-foreground">
-                       <span className="min-w-0">
--                        {t("discount")}
-+                        {t("promo_discount")}
-                         {liveOrder.vouchers?.length
-                           ? ` · ${liveOrder.vouchers.map((v) => v.label || v.code).join(", ")}`
-                           : ""}
-                       </span>
-                       <span className="shrink-0">
--                        -{formatMoney(liveOrder.discount_total, currency)}
-+                        -
-+                        {formatMoney(
-+                          Number(liveOrder.discount_total ?? 0) -
-+                            Number(liveOrder.special_discount ?? 0),
-+                          currency,
-+                        )}
-                       </span>
-                     </div>
-                   )}
+@@ -366,7 +366,7 @@ function StorePage() {
+ 
+   return (
+     <div className="grain min-h-screen bg-background pb-40">
+-      <header className="mx-auto grid max-w-3xl grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-5 sm:flex sm:justify-between">
++      <header className="mx-auto flex max-w-3xl flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+         <div className="flex min-w-0 items-center gap-3">
+           {store.logo_url ? (
+             <img
+@@ -387,7 +387,7 @@ function StorePage() {
+             </p>
+           </div>
+         </div>
+-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
++        <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+           <Link
+             to="/order"
+             className="soft-press inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs font-semibold"
+diff --git a/supabase/migrations/20260812000000_store_directory.sql b/supabase/migrations/20260812000000_store_directory.sql
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/supabase/migrations/20260812000000_store_directory.sql
+@@ -0,0 +1,8 @@
++-- Public stall directory: every store can opt in/out of the /order listing and
++-- carry a manual rank so an owner can pin their own stall to the top.
++alter table public.stores
++  add column if not exists listed boolean not null default true,
++  add column if not exists featured_rank integer not null default 0;
++
++create index if not exists stores_directory_idx
++  on public.stores (listed, featured_rank desc, name);
 -- 
 2.43.0
 

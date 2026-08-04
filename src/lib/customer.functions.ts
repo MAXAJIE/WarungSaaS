@@ -3,11 +3,14 @@ import {
   cancelGuestOrderImpl,
   getGuestOrderImpl,
   getMenuImpl,
+  listStoresImpl,
   saveCartImpl,
   submitOrderImpl,
   confirmReceiptImpl,
   type CartItemInput,
 } from "./customer.server";
+
+export const listStores = createServerFn({ method: "GET" }).handler(async () => listStoresImpl());
 
 export const getMenu = createServerFn({ method: "GET" })
   .inputValidator((d: { slug: string }) => d)

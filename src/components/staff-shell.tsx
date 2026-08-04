@@ -174,7 +174,7 @@ export function StaffShell({
 
   return (
     <div
-      className="min-h-screen bg-background text-foreground"
+      className="min-h-screen overflow-x-hidden bg-background text-foreground"
       style={{ ["--rail" as string]: RAIL }}
     >
       <aside
@@ -212,9 +212,9 @@ export function StaffShell({
         </div>
       </aside>
 
-      <div className="md:pl-[72px]">
+      <div className="min-w-0 md:pl-[72px]">
         <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur">
-          <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
+          <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center gap-2 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
             <div className="min-w-0 flex-1">
               <p className="truncate font-display text-lg font-semibold leading-tight">{title}</p>
               <p className="truncate text-xs text-muted-foreground">
@@ -252,7 +252,7 @@ export function StaffShell({
           </nav>
         </header>
 
-        <main className="mx-auto max-w-6xl px-4 py-5 duration-300 animate-in fade-in">
+        <main className="mx-auto w-full min-w-0 max-w-6xl px-4 py-5 duration-300 animate-in fade-in">
           {children}
         </main>
       </div>

@@ -58,6 +58,68 @@ async function findStoreBySlug(slug: string) {
 
 
 
+export type DirectoryStall = {
+  slug: string;
+  name: string;
+  tagline: string | null;
+  is_open: boolean;
+  logo_url: string | null;
+  cover_url: string | null;
+  featured_rank: number;
+};
+
+/**
+ * Every registered stall, for the public /order directory. `listed` and
+ * `featured_rank` arrive with the store-directory migration; on a stall that
+ * has not run it yet the extra select simply fails and everything is treated
+ * as listed with no manual ranking.
+ */
+export async function listStoresImpl(): Promise<{ stalls: DirectoryStall[] }> {
+  const { data: base } = await supabaseAdmin
+    .from("stores")
+    .select("id,name,slug,tagline,is_open")
+    .order("name");
+
+  type Extra = {
+    id: string;
+    logo_path: string | null;
+    cover_path: string | null;
+    featured_rank?: number | null;
+    listed?: boolean | null;
+  };
+  let extras: Extra[] = [];
+  const full = await looseDb()
+    .from("stores")
+    .select("id,logo_path,cover_path,featured_rank,listed");
+  if (full.error) {
+    const slim = await looseDb().from("stores").select("id,logo_path,cover_path");
+    extras = (slim.data ?? []) as Extra[];
+  } else {
+    extras = (full.data ?? []) as Extra[];
+  }
+  const byId = new Map(extras.map((e) => [e.id, e]));
+
+  const stalls = (base ?? [])
+    .map((s) => {
+      const extra = byId.get(s.id);
+      return {
+        slug: s.slug,
+        name: s.name,
+        tagline: s.tagline ?? null,
+        is_open: !!s.is_open,
+        logo_url: productPhotoUrl(extra?.logo_path ?? null),
+        cover_url: productPhotoUrl(extra?.cover_path ?? null),
+        featured_rank: Number(extra?.featured_rank ?? 0),
+        listed: extra?.listed ?? true,
+      };
+    })
+    .filter((s) => s.listed !== false)
+    .map(({ listed: _listed, ...s }) => s)
+    .sort((a, b) => b.featured_rank - a.featured_rank || a.name.localeCompare(b.name));
+
+  return { stalls };
+}
+
 async function storeBySlug(slug: string) {
   const store = await findStoreBySlug(slug);
   if (!store) throw new Error("Store not found.");

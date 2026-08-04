@@ -180,7 +180,37 @@ function AnalyticsPage() {
 
           <div className="cozy-card p-5">
             <h2 className="font-display text-lg font-bold">{t("top_products")}</h2>
-            <table className="mt-3 w-full text-sm">
+
+            {/* Phones get a stacked card per product: the four-column table used
+                to wrap money values onto two lines and read as a jumble. */}
+            <ul className="mt-3 space-y-2 sm:hidden">
+              {data.products.map((p, i) => (
+                <li key={p.name} className="rounded-2xl border border-border bg-muted/30 p-3">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
+                      {i + 1}
+                    </span>
+                    <p className="min-w-0 flex-1 text-sm font-semibold leading-snug">{p.name}</p>
+                  </div>
+                  <dl className="mt-2 grid grid-cols-3 gap-2 text-center">
+                    {[
+                      { k: t("qty"), v: String(p.qty) },
+                      { k: t("revenue"), v: formatMoney(p.revenue, data.currency) },
+                      { k: t("profit"), v: formatMoney(p.profit, data.currency) },
+                    ].map((cell) => (
+                      <div key={cell.k} className="min-w-0 rounded-xl bg-card px-2 py-1.5">
+                        <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {cell.k}
+                        </dt>
+                        <dd className="truncate text-xs font-bold tabular-nums">{cell.v}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </li>
+              ))}
+            </ul>
+
+            <table className="mt-3 hidden w-full text-sm sm:table">
               <thead>
                 <tr className="text-left text-xs uppercase text-muted-foreground">
                   <th className="pb-2">{t("product_name")}</th>
@@ -193,9 +223,11 @@ function AnalyticsPage() {
                 {data.products.map((p) => (
                   <tr key={p.name} className="border-t border-border">
                     <td className="py-2">{p.name}</td>
-                    <td className="py-2 text-right">{p.qty}</td>
-                    <td className="py-2 text-right">{formatMoney(p.revenue, data.currency)}</td>
-                    <td className="py-2 text-right font-semibold">
+                    <td className="py-2 text-right tabular-nums">{p.qty}</td>
+                    <td className="py-2 text-right tabular-nums">
+                      {formatMoney(p.revenue, data.currency)}
+                    </td>
+                    <td className="py-2 text-right font-semibold tabular-nums">
                       {formatMoney(p.profit, data.currency)}
                     </td>
                   </tr>

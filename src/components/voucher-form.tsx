@@ -283,7 +283,7 @@ export function VoucherForm({
         open={open}
         onClose={onClose}
         title={isEdit ? t("edit_voucher") : t("new_voucher")}
-        size="lg"
+        size="md"
         footer={
           <>
             <button

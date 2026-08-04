@@ -40,7 +40,7 @@ export function Modal({
   }, [open, onClose]);
 
   if (!open) return null;
-  const width = size === "sm" ? "max-w-md" : size === "lg" ? "max-w-3xl" : "max-w-2xl";
+  const width = size === "sm" ? "max-w-md" : size === "lg" ? "max-w-2xl" : "max-w-xl";
 
   return (
     <div className="fixed inset-0 z-[60] flex items-end justify-center p-0 sm:items-center sm:p-6">
@@ -54,7 +54,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`relative flex max-h-[92vh] w-full ${width} flex-col overflow-hidden rounded-t-3xl border border-border bg-card shadow-lift duration-200 animate-in fade-in slide-in-from-bottom-4 sm:rounded-3xl`}
+        className={`relative flex max-h-[88svh] w-full ${width} flex-col overflow-hidden rounded-t-3xl border border-border bg-card shadow-lift duration-200 animate-in fade-in slide-in-from-bottom-4 sm:rounded-3xl`}
       >
         <div className="flex items-start gap-3 border-b border-border/70 bg-muted/40 px-5 py-4">
           <div className="min-w-0 flex-1">
@@ -71,7 +71,9 @@ export function Modal({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{children}</div>
+        <div className="min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-5 sm:py-5">
+          {children}
+        </div>
 
         {footer && (
           <div className="flex gap-2 border-t border-border/70 bg-muted/30 px-5 py-4">{footer}</div>
