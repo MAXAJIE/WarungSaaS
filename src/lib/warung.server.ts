@@ -156,12 +156,39 @@ export async function signPhoto(path: string | null | undefined): Promise<string
   return productPhotoUrl(path);
 }
 
-export async function signPhotos<T extends { photo_url: string | null }>(
-  rows: T[],
-): Promise<Array<T & { photo_signed_url: string | null }>> {
-  return Promise.all(
-    rows.map(async (r) => ({ ...r, photo_signed_url: await signPhoto(r.photo_url) })),
+/** Cap on how many shots one dish may carry. */
+export const MAX_PRODUCT_PHOTOS = 5;
+
+/**
+ * Cover + gallery as public URLs, de-duplicated and capped at five. Rows saved
+ * before the gallery migration only have `photo_url`, which still works.
+ */
+export function productGalleryUrls(row: {
+  photo_url?: string | null;
+  photo_urls?: string[] | null;
+}): string[] {
+  const paths = [row.photo_url, ...(row.photo_urls ?? [])].filter(
+    (p): p is string => typeof p === "string" && p.length > 0,
   );
+  const urls: string[] = [];
+  for (const path of paths) {
+    const url = productPhotoUrl(path);
+    if (url && !urls.includes(url)) urls.push(url);
+  }
+  return urls.slice(0, MAX_PRODUCT_PHOTOS);
+}
+
+export async function signPhotos<T extends { photo_url: string | null; photo_urls?: string[] | null }>(
+  rows: T[],
+): Promise<Array<T & { photo_signed_url: string | null; photo_signed_urls: string[] }>> {
+  return rows.map((r) => {
+    const gallery = productGalleryUrls(r);
+    return {
+      ...r,
+      photo_signed_url: gallery[0] ?? productPhotoUrl(r.photo_url),
+      photo_signed_urls: gallery,
+    };
+  });
 }
 
 /** Every voucher attached to a ticket, old single column included. */

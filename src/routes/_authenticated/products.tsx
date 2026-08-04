@@ -43,7 +43,9 @@ type Row = {
   stock_total: number | null;
   stock_sold: number;
   photo_url: string | null;
+  photo_urls: string[] | null;
   photo_signed_url: string | null;
+  photo_signed_urls: string[];
   combo_items: ComboItem[];
 };
 
@@ -64,7 +66,14 @@ const blank = {
   combo_items: [] as ComboItem[],
   photo_url: null as string | null,
   photo_preview: null as string | null,
+  /** Storage paths of every shot, first = cover. Max MAX_PHOTOS. */
+  photo_urls: [] as string[],
+  /** Public URLs matching photo_urls, kept in step for the thumbnails. */
+  photo_previews: [] as string[],
 };
+
+/** Owners may show up to five shots per dish; the menu turns them into a carousel. */
+const MAX_PHOTOS = 5;
 
 type Draft = typeof blank & { id?: string };
 
@@ -157,7 +166,14 @@ function ProductsPage() {
       }
       pendingOptionSaves.current.clear();
       setPendingOptionCount(0);
-      const { photo_preview: _preview, group_ids, combo_items, stock_total, ...payload } = draft!;
+      const {
+        photo_preview: _preview,
+        photo_previews: _previews,
+        group_ids,
+        combo_items,
+        stock_total,
+        ...payload
+      } = draft!;
       return save({
         data: {
           ...payload,
@@ -195,7 +211,18 @@ function ProductsPage() {
     // matches the square tiles used on the menu.
     mutationFn: async (dataUrl: string) => upload({ data: { base64: dataUrl, ext: "jpg" } }),
     onSuccess: (res) =>
-      setDraft((d) => (d ? { ...d, photo_url: res.path, photo_preview: res.signedUrl } : d)),
+      setDraft((d) => {
+        if (!d) return d;
+        const paths = [...d.photo_urls, res.path].slice(0, MAX_PHOTOS);
+        const previews = [...d.photo_previews, res.signedUrl ?? ""].slice(0, MAX_PHOTOS);
+        return {
+          ...d,
+          photo_urls: paths,
+          photo_previews: previews,
+          photo_url: paths[0] ?? null,
+          photo_preview: previews[0] ?? null,
+        };
+      }),
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -591,43 +618,66 @@ function ProductsPage() {
             </section>
 
             <section className={`space-y-3 ${tab === "photo" ? "" : "hidden"}`}>
-              <div className="flex items-center gap-3">
-                <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-2xl border border-border bg-muted">
-                  {draft.photo_preview ? (
+              {/* Up to five square shots. The first one is the cover used on
+                  the menu tiles; the rest become the customer carousel. */}
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+                {draft.photo_previews.map((src, i) => (
+                  <div
+                    key={`${src}-${i}`}
+                    className="group relative aspect-square overflow-hidden rounded-2xl border border-border bg-muted"
+                  >
                     <img
-                      src={draft.photo_preview}
-                      alt={draft.name || t("photo")}
+                      src={src}
+                      alt={`${draft.name || t("photo")} ${i + 1}`}
                       className="size-full object-cover"
                     />
-                  ) : (
-                    <ImagePlus className="size-5 text-muted-foreground" />
-                  )}
-                </div>
-                <label className="soft-press inline-flex cursor-pointer items-center gap-2 rounded-2xl border border-border bg-card px-4 py-2 text-sm font-semibold">
-                  <ImagePlus className="size-4" />
-                  {uploadM.isPending ? t("loading") : t("upload_photo")}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) setCropFile(file);
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-                {draft.photo_url && (
-                  <button
-                    type="button"
-                    onClick={() => setDraft({ ...draft, photo_url: null, photo_preview: null })}
-                    className="soft-press grid size-9 place-items-center rounded-2xl bg-destructive/10 text-destructive"
-                    aria-label={t("remove_photo")}
-                  >
-                    <X className="size-4" />
-                  </button>
+                    {i === 0 && (
+                      <span className="absolute inset-x-1 bottom-1 rounded-full bg-foreground/70 px-2 py-0.5 text-center text-[10px] font-bold text-background">
+                        {t("cover_photo_badge")}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const paths = draft.photo_urls.filter((_, k) => k !== i);
+                        const previews = draft.photo_previews.filter((_, k) => k !== i);
+                        setDraft({
+                          ...draft,
+                          photo_urls: paths,
+                          photo_previews: previews,
+                          photo_url: paths[0] ?? null,
+                          photo_preview: previews[0] ?? null,
+                        });
+                      }}
+                      className="soft-press absolute right-1 top-1 grid size-6 place-items-center rounded-full bg-destructive text-destructive-foreground"
+                      aria-label={t("remove_photo")}
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                ))}
+
+                {draft.photo_previews.length < MAX_PHOTOS && (
+                  <label className="soft-press grid aspect-square cursor-pointer place-items-center gap-1 rounded-2xl border border-dashed border-border bg-card text-center text-[11px] font-semibold text-muted-foreground">
+                    <ImagePlus className="size-5" />
+                    {uploadM.isPending ? t("loading") : t("upload_photo")}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) setCropFile(file);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
                 )}
               </div>
+              <p className="text-[11px] text-muted-foreground">
+                {t("photo_gallery_hint")} ({draft.photo_previews.length}/{MAX_PHOTOS})
+              </p>
+
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
@@ -700,7 +750,7 @@ function ProductsPage() {
               onDragStart={() => (dragId.current = p.id)}
               onDragOver={(e) => canDrag && e.preventDefault()}
               onDrop={() => canDrag && onDrop(p.id)}
-              className={`cozy-card flex items-start gap-3 transition-transform duration-200 hover:-translate-y-0.5 ${viewPadClass(prefs)} ${canDrag ? "cursor-grab active:cursor-grabbing" : ""}`}
+              className={`cozy-card flex min-w-0 max-w-full items-start gap-2 overflow-hidden sm:gap-3 transition-transform duration-200 hover:-translate-y-0.5 ${viewPadClass(prefs)} ${canDrag ? "cursor-grab active:cursor-grabbing" : ""}`}
             >
               {canDrag && <GripVertical className="mt-1 size-4 shrink-0 text-muted-foreground" />}
               {p.photo_signed_url && (
@@ -708,11 +758,11 @@ function ProductsPage() {
                   src={p.photo_signed_url}
                   alt={p.name}
                   loading="lazy"
-                  className={`shrink-0 rounded-2xl object-cover ${prefs.size === "sm" ? "size-12" : prefs.size === "lg" ? "size-24" : "size-16"}`}
+                  className={`shrink-0 rounded-2xl object-cover ${prefs.size === "sm" ? "size-12" : prefs.size === "lg" ? "size-20 sm:size-24" : "size-14 sm:size-16"}`}
                 />
               )}
               <div className="min-w-0 flex-1">
-                <p className="truncate font-display text-lg font-bold">
+                <p className="truncate font-display text-base font-bold sm:text-lg">
                   {p.name}
                   {p.is_combo && (
                     <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 align-middle text-[10px] font-bold uppercase text-primary">
@@ -720,7 +770,7 @@ function ProductsPage() {
                     </span>
                   )}
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="break-words text-xs text-muted-foreground">
                   {p.category || "—"} · {p.is_available ? t("available") : t("sold")}
                   {(p.group_ids ?? []).length > 0 &&
                     ` · ${(p.group_ids ?? [])
@@ -752,7 +802,7 @@ function ProductsPage() {
                   </span>
                 </p>
               </div>
-              <div className="flex flex-col gap-2">
+              <div className="flex shrink-0 flex-col gap-2">
                 <button
                   onClick={() => {
                     setTab(p.is_combo ? "combo" : "basics");
@@ -775,6 +825,8 @@ function ProductsPage() {
                       })),
                       photo_url: p.photo_url,
                       photo_preview: p.photo_signed_url,
+                      photo_urls: (p.photo_urls ?? []).filter(Boolean),
+                      photo_previews: p.photo_signed_urls ?? [],
                     });
                   }}
                   className="soft-press grid size-9 place-items-center rounded-2xl border border-border"

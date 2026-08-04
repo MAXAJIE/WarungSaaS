@@ -9,6 +9,7 @@ import {
   requireMember,
   requireOwner,
   signPhoto,
+  MAX_PRODUCT_PHOTOS,
   signPhotos,
   sortRoles,
   ASSIGNABLE_ROLES,
@@ -517,6 +518,8 @@ export type ProductInput = {
   cost_price: number;
   sell_price: number;
   photo_url?: string | null;
+  /** Up to five gallery shots; the first one is also kept as the cover. */
+  photo_urls?: string[] | null;
   is_available?: boolean;
   sort_order?: number;
   group_id?: string | null;
@@ -531,6 +534,13 @@ export type ProductInput = {
 export async function upsertProductImpl(ctx: AuthedCtx, data: ProductInput) {
   const { store, member } = await requireOwner(ctx);
   const { combo_items: comboItems, group_ids: groupIds, ...rest } = data;
+  // The gallery is the source of truth; the legacy single column mirrors its
+  // first shot so older reads (receipts, pickers) keep showing a photo.
+  const gallery = (rest.photo_urls ?? undefined)?.filter(Boolean).slice(0, MAX_PRODUCT_PHOTOS);
+  if (gallery) {
+    rest.photo_urls = gallery;
+    rest.photo_url = gallery[0] ?? null;
+  }
   // The legacy single column keeps the first compartment so older reads still work.
   const payload = {
     ...rest,

@@ -132,14 +132,17 @@ export async function getMenuImpl(data: { slug: string }) {
   const { data: products } = await supabaseAdmin
     .from("products")
     .select(
-      "id,name,name_zh,name_ms,description,category,sell_price,photo_url,is_available,stock_total,stock_sold,is_combo",
+      "id,name,name_zh,name_ms,description,category,sell_price,photo_url,photo_urls,is_available,stock_total,stock_sold,is_combo",
     )
     .eq("store_id", store.id)
     .eq("is_available", true)
     .order("sort_order")
     .order("created_at");
   const withPhotos = await signPhotos(
-    (products ?? []).map((p) => ({ ...p, photo_url: p.photo_url })),
+    (products ?? []).map((p) => ({
+      ...p,
+      photo_urls: ((p as { photo_urls?: string[] | null }).photo_urls ?? null) as string[] | null,
+    })),
   );
   // Remaining = total stocked - units already sold. The owner only ever edits
   // the total, so topping it up immediately lifts the remaining count here too.

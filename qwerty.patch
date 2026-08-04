@@ -1,653 +1,575 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lovable <dev@lovable.dev>
-Date: Tue, 4 Aug 2026 18:00:00 +0800
-Subject: [PATCH] Mobile layout fixes, store QR button and public stall directory
+Date: Tue, 4 Aug 2026 17:45:00 +0800
+Subject: [PATCH] feat(products): up to 5 photos per dish with a customer-facing carousel
 
-- staff shell/modal: stop the sideways drift that clipped cards and menus
-- voucher popup: medium width instead of the widest size
-- customer stall header + revenue top products: phone-friendly layouts
-- store settings: QR button beside the /s link, plus directory listing and
-  recommended-position controls
-- /order: every registered stall, with square recommended widgets
+Also fixes mobile product-list cards and the clipped promo dropdown.
 ---
-diff --git a/src/components/modal.tsx b/src/components/modal.tsx
-index 716d9af..bbd075e 100644
---- a/src/components/modal.tsx
-+++ b/src/components/modal.tsx
-@@ -40,7 +40,7 @@ export function Modal({
-   }, [open, onClose]);
+diff --git a/src/components/view-toolbar.tsx b/src/components/view-toolbar.tsx
+index c28bde2..a7e3247 100644
+--- a/src/components/view-toolbar.tsx
++++ b/src/components/view-toolbar.tsx
+@@ -57,10 +57,11 @@ export function useViewPrefs(key: string, initial?: Partial<ViewPrefs>) {
  
-   if (!open) return null;
--  const width = size === "sm" ? "max-w-md" : size === "lg" ? "max-w-3xl" : "max-w-2xl";
-+  const width = size === "sm" ? "max-w-md" : size === "lg" ? "max-w-2xl" : "max-w-xl";
+ /** Tailwind grid classes for the chosen size + arrangement. */
+ export function viewGridClass(prefs: ViewPrefs) {
+-  if (prefs.layout === "list") return "grid grid-cols-1 gap-3";
+-  if (prefs.size === "sm") return "grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
+-  if (prefs.size === "lg") return "grid gap-4 lg:grid-cols-2";
+-  return "grid gap-3 md:grid-cols-2 xl:grid-cols-3";
++  if (prefs.layout === "list") return "grid grid-cols-[minmax(0,1fr)] gap-3";
++  if (prefs.size === "sm")
++    return "grid grid-cols-[minmax(0,1fr)] gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
++  if (prefs.size === "lg") return "grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2";
++  return "grid grid-cols-[minmax(0,1fr)] gap-3 md:grid-cols-2 xl:grid-cols-3";
+ }
  
-   return (
-     <div className="fixed inset-0 z-[60] flex items-end justify-center p-0 sm:items-center sm:p-6">
-@@ -54,7 +54,7 @@ export function Modal({
-         role="dialog"
-         aria-modal="true"
-         aria-label={title}
--        className={`relative flex max-h-[92vh] w-full ${width} flex-col overflow-hidden rounded-t-3xl border border-border bg-card shadow-lift duration-200 animate-in fade-in slide-in-from-bottom-4 sm:rounded-3xl`}
-+        className={`relative flex max-h-[88svh] w-full ${width} flex-col overflow-hidden rounded-t-3xl border border-border bg-card shadow-lift duration-200 animate-in fade-in slide-in-from-bottom-4 sm:rounded-3xl`}
-       >
-         <div className="flex items-start gap-3 border-b border-border/70 bg-muted/40 px-5 py-4">
-           <div className="min-w-0 flex-1">
-@@ -71,7 +71,9 @@ export function Modal({
-           </button>
-         </div>
- 
--        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">{children}</div>
-+        <div className="min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-5 sm:py-5">
-+          {children}
-+        </div>
- 
-         {footer && (
-           <div className="flex gap-2 border-t border-border/70 bg-muted/30 px-5 py-4">{footer}</div>
-diff --git a/src/components/staff-shell.tsx b/src/components/staff-shell.tsx
-index ae57128..d875a1f 100644
---- a/src/components/staff-shell.tsx
-+++ b/src/components/staff-shell.tsx
-@@ -174,7 +174,7 @@ export function StaffShell({
- 
-   return (
-     <div
--      className="min-h-screen bg-background text-foreground"
-+      className="min-h-screen overflow-x-hidden bg-background text-foreground"
-       style={{ ["--rail" as string]: RAIL }}
-     >
-       <aside
-@@ -212,9 +212,9 @@ export function StaffShell({
-         </div>
-       </aside>
- 
--      <div className="md:pl-[72px]">
-+      <div className="min-w-0 md:pl-[72px]">
-         <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur">
--          <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
-+          <div className="mx-auto flex w-full min-w-0 max-w-6xl items-center gap-2 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
-             <div className="min-w-0 flex-1">
-               <p className="truncate font-display text-lg font-semibold leading-tight">{title}</p>
-               <p className="truncate text-xs text-muted-foreground">
-@@ -252,7 +252,7 @@ export function StaffShell({
-           </nav>
-         </header>
- 
--        <main className="mx-auto max-w-6xl px-4 py-5 duration-300 animate-in fade-in">
-+        <main className="mx-auto w-full min-w-0 max-w-6xl px-4 py-5 duration-300 animate-in fade-in">
-           {children}
-         </main>
-       </div>
-diff --git a/src/components/voucher-form.tsx b/src/components/voucher-form.tsx
-index badffb9..682c57f 100644
---- a/src/components/voucher-form.tsx
-+++ b/src/components/voucher-form.tsx
-@@ -283,7 +283,7 @@ export function VoucherForm({
-         open={open}
-         onClose={onClose}
-         title={isEdit ? t("edit_voucher") : t("new_voucher")}
--        size="lg"
-+        size="md"
-         footer={
-           <>
-             <button
-diff --git a/src/lib/customer.functions.ts b/src/lib/customer.functions.ts
-index 7229b68..069f921 100644
---- a/src/lib/customer.functions.ts
-+++ b/src/lib/customer.functions.ts
-@@ -3,12 +3,15 @@ import {
-   cancelGuestOrderImpl,
-   getGuestOrderImpl,
-   getMenuImpl,
-+  listStoresImpl,
-   saveCartImpl,
-   submitOrderImpl,
-   confirmReceiptImpl,
-   type CartItemInput,
- } from "./customer.server";
- 
-+export const listStores = createServerFn({ method: "GET" }).handler(async () => listStoresImpl());
-+
- export const getMenu = createServerFn({ method: "GET" })
-   .inputValidator((d: { slug: string }) => d)
-   .handler(async ({ data }) => getMenuImpl(data));
+ export function viewPadClass(prefs: ViewPrefs) {
+diff --git a/src/integrations/supabase/types.ts b/src/integrations/supabase/types.ts
+index deaa089..5c921fc 100644
+--- a/src/integrations/supabase/types.ts
++++ b/src/integrations/supabase/types.ts
+@@ -502,6 +502,7 @@ export type Database = {
+           name_ms: string;
+           name_zh: string;
+           photo_url: string | null;
++          photo_urls?: string[] | null;
+           sell_price: number;
+           sort_order: number;
+           stock_sold: number;
+@@ -521,6 +522,7 @@ export type Database = {
+           name_ms?: string;
+           name_zh?: string;
+           photo_url?: string | null;
++          photo_urls?: string[] | null;
+           sell_price?: number;
+           sort_order?: number;
+           stock_sold?: number;
+@@ -540,6 +542,7 @@ export type Database = {
+           name_ms?: string;
+           name_zh?: string;
+           photo_url?: string | null;
++          photo_urls?: string[] | null;
+           sell_price?: number;
+           sort_order?: number;
+           stock_sold?: number;
 diff --git a/src/lib/customer.server.ts b/src/lib/customer.server.ts
-index fcb4d32..40e92a9 100644
+index 40e92a9..6a1ba35 100644
 --- a/src/lib/customer.server.ts
 +++ b/src/lib/customer.server.ts
-@@ -58,6 +58,68 @@ async function findStoreBySlug(slug: string) {
- 
- 
- 
-+export type DirectoryStall = {
-+  slug: string;
-+  name: string;
-+  tagline: string | null;
-+  is_open: boolean;
-+  logo_url: string | null;
-+  cover_url: string | null;
-+  featured_rank: number;
-+};
-+
-+/**
-+ * Every registered stall, for the public /order directory. `listed` and
-+ * `featured_rank` arrive with the store-directory migration; on a stall that
-+ * has not run it yet the extra select simply fails and everything is treated
-+ * as listed with no manual ranking.
-+ */
-+export async function listStoresImpl(): Promise<{ stalls: DirectoryStall[] }> {
-+  const { data: base } = await supabaseAdmin
-+    .from("stores")
-+    .select("id,name,slug,tagline,is_open")
-+    .order("name");
-+
-+  type Extra = {
-+    id: string;
-+    logo_path: string | null;
-+    cover_path: string | null;
-+    featured_rank?: number | null;
-+    listed?: boolean | null;
-+  };
-+  let extras: Extra[] = [];
-+  const full = await looseDb()
-+    .from("stores")
-+    .select("id,logo_path,cover_path,featured_rank,listed");
-+  if (full.error) {
-+    const slim = await looseDb().from("stores").select("id,logo_path,cover_path");
-+    extras = (slim.data ?? []) as Extra[];
-+  } else {
-+    extras = (full.data ?? []) as Extra[];
-+  }
-+  const byId = new Map(extras.map((e) => [e.id, e]));
-+
-+  const stalls = (base ?? [])
-+    .map((s) => {
-+      const extra = byId.get(s.id);
-+      return {
-+        slug: s.slug,
-+        name: s.name,
-+        tagline: s.tagline ?? null,
-+        is_open: !!s.is_open,
-+        logo_url: productPhotoUrl(extra?.logo_path ?? null),
-+        cover_url: productPhotoUrl(extra?.cover_path ?? null),
-+        featured_rank: Number(extra?.featured_rank ?? 0),
-+        listed: extra?.listed ?? true,
-+      };
-+    })
-+    .filter((s) => s.listed !== false)
-+    .map(({ listed: _listed, ...s }) => s)
-+    .sort((a, b) => b.featured_rank - a.featured_rank || a.name.localeCompare(b.name));
-+
-+  return { stalls };
-+}
-+
- async function storeBySlug(slug: string) {
-   const store = await findStoreBySlug(slug);
-   if (!store) throw new Error("Store not found.");
+@@ -132,14 +132,17 @@ export async function getMenuImpl(data: { slug: string }) {
+   const { data: products } = await supabaseAdmin
+     .from("products")
+     .select(
+-      "id,name,name_zh,name_ms,description,category,sell_price,photo_url,is_available,stock_total,stock_sold,is_combo",
++      "id,name,name_zh,name_ms,description,category,sell_price,photo_url,photo_urls,is_available,stock_total,stock_sold,is_combo",
+     )
+     .eq("store_id", store.id)
+     .eq("is_available", true)
+     .order("sort_order")
+     .order("created_at");
+   const withPhotos = await signPhotos(
+-    (products ?? []).map((p) => ({ ...p, photo_url: p.photo_url })),
++    (products ?? []).map((p) => ({
++      ...p,
++      photo_urls: ((p as { photo_urls?: string[] | null }).photo_urls ?? null) as string[] | null,
++    })),
+   );
+   // Remaining = total stocked - units already sold. The owner only ever edits
+   // the total, so topping it up immediately lifts the remaining count here too.
 diff --git a/src/lib/i18n.tsx b/src/lib/i18n.tsx
-index 8ee666e..13cdfda 100644
+index 13cdfda..496c29c 100644
 --- a/src/lib/i18n.tsx
 +++ b/src/lib/i18n.tsx
-@@ -90,6 +90,18 @@ const en: Dict = {
-   landing_step_3: "Show your order QR at the counter, then pick up when called.",
-   landing_no_recent: "No stalls visited yet",
-   landing_no_recent_hint: "Once you scan a stall it is kept here for one tap next time.",
-+  stall_open_badge: "Open",
-+  stall_closed_badge: "Closed",
-+  landing_recommended: "Recommended restaurants",
-+  landing_recommended_hint: "Hand-picked stalls to try today.",
-+  landing_all_stalls: "All restaurants",
-+  landing_no_stalls: "No stalls yet",
-+  landing_no_stalls_hint: "Stalls appear here as soon as they register.",
-+  store_qr: "Store QR",
-+  store_qr_hint: "Print or share this code so customers land on your menu.",
-+  store_listed: "Show my stall in the customer directory",
-+  store_featured_rank: "Recommended position",
-+  store_featured_rank_hint: "Higher numbers appear first. 0 leaves it unranked.",
-   landing_not_found: "That code did not point at a stall we know.",
-   my_order: "My order",
-   notifications: "Notifications",
-@@ -932,6 +944,18 @@ const zh: Dict = {
-   landing_step_3: "在柜台出示订单二维码，叫号后领取。",
-   landing_no_recent: "还没有到访过任何摊位",
-   landing_no_recent_hint: "扫描摊位后会保存在这里，方便下次一键进入。",
-+  stall_open_badge: "营业中",
-+  stall_closed_badge: "休息中",
-+  landing_recommended: "推荐餐厅",
-+  landing_recommended_hint: "今天值得一试的摊位。",
-+  landing_all_stalls: "全部餐厅",
-+  landing_no_stalls: "暂时没有摊位",
-+  landing_no_stalls_hint: "摊位注册后会显示在这里。",
-+  store_qr: "店铺二维码",
-+  store_qr_hint: "打印或分享此二维码，顾客扫码即可打开菜单。",
-+  store_listed: "在顾客目录中显示我的摊位",
-+  store_featured_rank: "推荐排序",
-+  store_featured_rank_hint: "数字越大越靠前，0 表示不排序。",
-   landing_not_found: "该代码没有对应任何摊位。",
-   my_order: "我的订单",
-   section_reward: "顾客获得什么",
-@@ -1421,6 +1445,18 @@ const ms: Dict = {
-   landing_step_3: "Tunjukkan QR pesanan anda di kaunter, kemudian ambil apabila dipanggil.",
-   landing_no_recent: "Belum ada gerai dilawati",
-   landing_no_recent_hint: "Selepas anda imbas satu gerai, ia disimpan di sini untuk akses pantas.",
-+  stall_open_badge: "Buka",
-+  stall_closed_badge: "Tutup",
-+  landing_recommended: "Restoran disyorkan",
-+  landing_recommended_hint: "Gerai pilihan untuk dicuba hari ini.",
-+  landing_all_stalls: "Semua restoran",
-+  landing_no_stalls: "Belum ada gerai",
-+  landing_no_stalls_hint: "Gerai akan muncul di sini sebaik sahaja mendaftar.",
-+  store_qr: "Kod QR kedai",
-+  store_qr_hint: "Cetak atau kongsi kod ini supaya pelanggan terus ke menu anda.",
-+  store_listed: "Papar gerai saya dalam direktori pelanggan",
-+  store_featured_rank: "Kedudukan disyorkan",
-+  store_featured_rank_hint: "Nombor lebih besar muncul dahulu. 0 bermaksud tiada kedudukan.",
-   landing_not_found: "Kod itu tidak merujuk kepada mana-mana gerai yang kami kenali.",
-   my_order: "Pesanan saya",
-   section_reward: "Apa yang pelanggan dapat",
-diff --git a/src/lib/staff.functions.ts b/src/lib/staff.functions.ts
-index cb4f538..3f36453 100644
---- a/src/lib/staff.functions.ts
-+++ b/src/lib/staff.functions.ts
-@@ -71,6 +71,8 @@ export const updateStore = createServerFn({ method: "POST" })
-       is_open?: boolean;
-       order_code_template?: string;
-       event_spend?: number;
-+      listed?: boolean;
-+      featured_rank?: number;
-       logo_path?: string | null;
-       cover_path?: string | null;
-     }) => d,
+@@ -170,6 +170,8 @@ const en: Dict = {
+   all: "All",
+   photo: "Photo",
+   upload_photo: "Upload photo",
++  cover_photo_badge: "Cover",
++  photo_gallery_hint: "Up to 5 photos. The first one is the cover; the rest swipe as a carousel on the menu.",
+   remove_photo: "Remove photo",
+   choose_role: "Choose your role",
+   role_pick_hint: "Your owner invited you for this role.",
+@@ -620,6 +622,8 @@ const zh: Dict = {
+   all: "全部",
+   photo: "照片",
+   upload_photo: "上传照片",
++  cover_photo_badge: "封面",
++  photo_gallery_hint: "最多 5 张照片。第一张是封面，其余会在菜单上以轮播方式滑动。",
+   remove_photo: "移除照片",
+   choose_role: "选择你的身份",
+   role_pick_hint: "店主邀请你担任此身份。",
+@@ -1115,6 +1119,8 @@ const ms: Dict = {
+   all: "Semua",
+   photo: "Foto",
+   upload_photo: "Muat naik foto",
++  cover_photo_badge: "Muka depan",
++  photo_gallery_hint: "Maksimum 5 foto. Yang pertama jadi muka depan; selebihnya boleh dileret pada menu.",
+   remove_photo: "Buang foto",
+   choose_role: "Pilih peranan anda",
+   role_pick_hint: "Pemilik menjemput anda untuk peranan ini.",
 diff --git a/src/lib/staff.server.ts b/src/lib/staff.server.ts
-index 7127973..992fbdf 100644
+index 992fbdf..0b6689d 100644
 --- a/src/lib/staff.server.ts
 +++ b/src/lib/staff.server.ts
-@@ -223,6 +223,10 @@ export async function updateStoreImpl(
-     order_code_template?: string;
-     /** Spend that unlocks the counter's event discount. 0 disables it. */
-     event_spend?: number;
-+    /** Show this stall on the public /order directory. */
-+    listed?: boolean;
-+    /** Manual ordering for the directory's recommended row. Higher shows first. */
-+    featured_rank?: number;
-     /** Storage paths (product-photos bucket). Gift thresholds/event spend are
-      * configured per-gift/per-promo elsewhere and are not edited here. */
-     logo_path?: string | null;
-diff --git a/src/routes/_authenticated/analytics.tsx b/src/routes/_authenticated/analytics.tsx
-index e031fee..308d8d4 100644
---- a/src/routes/_authenticated/analytics.tsx
-+++ b/src/routes/_authenticated/analytics.tsx
-@@ -180,7 +180,37 @@ function AnalyticsPage() {
+@@ -9,6 +9,7 @@ import {
+   requireMember,
+   requireOwner,
+   signPhoto,
++  MAX_PRODUCT_PHOTOS,
+   signPhotos,
+   sortRoles,
+   ASSIGNABLE_ROLES,
+@@ -517,6 +518,8 @@ export type ProductInput = {
+   cost_price: number;
+   sell_price: number;
+   photo_url?: string | null;
++  /** Up to five gallery shots; the first one is also kept as the cover. */
++  photo_urls?: string[] | null;
+   is_available?: boolean;
+   sort_order?: number;
+   group_id?: string | null;
+@@ -531,6 +534,13 @@ export type ProductInput = {
+ export async function upsertProductImpl(ctx: AuthedCtx, data: ProductInput) {
+   const { store, member } = await requireOwner(ctx);
+   const { combo_items: comboItems, group_ids: groupIds, ...rest } = data;
++  // The gallery is the source of truth; the legacy single column mirrors its
++  // first shot so older reads (receipts, pickers) keep showing a photo.
++  const gallery = (rest.photo_urls ?? undefined)?.filter(Boolean).slice(0, MAX_PRODUCT_PHOTOS);
++  if (gallery) {
++    rest.photo_urls = gallery;
++    rest.photo_url = gallery[0] ?? null;
++  }
+   // The legacy single column keeps the first compartment so older reads still work.
+   const payload = {
+     ...rest,
+diff --git a/src/lib/warung.server.ts b/src/lib/warung.server.ts
+index 131ffd3..a8a2399 100644
+--- a/src/lib/warung.server.ts
++++ b/src/lib/warung.server.ts
+@@ -156,12 +156,39 @@ export async function signPhoto(path: string | null | undefined): Promise<string
+   return productPhotoUrl(path);
+ }
  
-           <div className="cozy-card p-5">
-             <h2 className="font-display text-lg font-bold">{t("top_products")}</h2>
--            <table className="mt-3 w-full text-sm">
+-export async function signPhotos<T extends { photo_url: string | null }>(
+-  rows: T[],
+-): Promise<Array<T & { photo_signed_url: string | null }>> {
+-  return Promise.all(
+-    rows.map(async (r) => ({ ...r, photo_signed_url: await signPhoto(r.photo_url) })),
++/** Cap on how many shots one dish may carry. */
++export const MAX_PRODUCT_PHOTOS = 5;
 +
-+            {/* Phones get a stacked card per product: the four-column table used
-+                to wrap money values onto two lines and read as a jumble. */}
-+            <ul className="mt-3 space-y-2 sm:hidden">
-+              {data.products.map((p, i) => (
-+                <li key={p.name} className="rounded-2xl border border-border bg-muted/30 p-3">
-+                  <div className="flex min-w-0 items-start gap-2">
-+                    <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
-+                      {i + 1}
-+                    </span>
-+                    <p className="min-w-0 flex-1 text-sm font-semibold leading-snug">{p.name}</p>
-+                  </div>
-+                  <dl className="mt-2 grid grid-cols-3 gap-2 text-center">
-+                    {[
-+                      { k: t("qty"), v: String(p.qty) },
-+                      { k: t("revenue"), v: formatMoney(p.revenue, data.currency) },
-+                      { k: t("profit"), v: formatMoney(p.profit, data.currency) },
-+                    ].map((cell) => (
-+                      <div key={cell.k} className="min-w-0 rounded-xl bg-card px-2 py-1.5">
-+                        <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
-+                          {cell.k}
-+                        </dt>
-+                        <dd className="truncate text-xs font-bold tabular-nums">{cell.v}</dd>
-+                      </div>
-+                    ))}
-+                  </dl>
-+                </li>
-+              ))}
-+            </ul>
++/**
++ * Cover + gallery as public URLs, de-duplicated and capped at five. Rows saved
++ * before the gallery migration only have `photo_url`, which still works.
++ */
++export function productGalleryUrls(row: {
++  photo_url?: string | null;
++  photo_urls?: string[] | null;
++}): string[] {
++  const paths = [row.photo_url, ...(row.photo_urls ?? [])].filter(
++    (p): p is string => typeof p === "string" && p.length > 0,
+   );
++  const urls: string[] = [];
++  for (const path of paths) {
++    const url = productPhotoUrl(path);
++    if (url && !urls.includes(url)) urls.push(url);
++  }
++  return urls.slice(0, MAX_PRODUCT_PHOTOS);
++}
 +
-+            <table className="mt-3 hidden w-full text-sm sm:table">
-               <thead>
-                 <tr className="text-left text-xs uppercase text-muted-foreground">
-                   <th className="pb-2">{t("product_name")}</th>
-@@ -193,9 +223,11 @@ function AnalyticsPage() {
-                 {data.products.map((p) => (
-                   <tr key={p.name} className="border-t border-border">
-                     <td className="py-2">{p.name}</td>
--                    <td className="py-2 text-right">{p.qty}</td>
--                    <td className="py-2 text-right">{formatMoney(p.revenue, data.currency)}</td>
--                    <td className="py-2 text-right font-semibold">
-+                    <td className="py-2 text-right tabular-nums">{p.qty}</td>
-+                    <td className="py-2 text-right tabular-nums">
-+                      {formatMoney(p.revenue, data.currency)}
-+                    </td>
-+                    <td className="py-2 text-right font-semibold tabular-nums">
-                       {formatMoney(p.profit, data.currency)}
-                     </td>
-                   </tr>
-diff --git a/src/routes/_authenticated/store.tsx b/src/routes/_authenticated/store.tsx
-index 785f7c5..42f1120 100644
---- a/src/routes/_authenticated/store.tsx
-+++ b/src/routes/_authenticated/store.tsx
-@@ -3,10 +3,12 @@ import { useEffect, useRef, useState } from "react";
- import { useMutation, useQueryClient } from "@tanstack/react-query";
- import { useServerFn } from "@tanstack/react-start";
- import { toast } from "sonner";
--import { Clock, ExternalLink, ImagePlus, Save, Store as StoreIcon } from "lucide-react";
-+import { Clock, ExternalLink, ImagePlus, QrCode, Save, Store as StoreIcon } from "lucide-react";
- import { StaffShell, useStoreGuard } from "@/components/staff-shell";
- import { updateStore, uploadStoreImage } from "@/lib/staff.functions";
- import { ImageCropper } from "@/components/image-cropper";
-+import { Modal } from "@/components/modal";
-+import { QrImage } from "@/components/qr-code";
- import { useI18n } from "@/lib/i18n";
++export async function signPhotos<T extends { photo_url: string | null; photo_urls?: string[] | null }>(
++  rows: T[],
++): Promise<Array<T & { photo_signed_url: string | null; photo_signed_urls: string[] }>> {
++  return rows.map((r) => {
++    const gallery = productGalleryUrls(r);
++    return {
++      ...r,
++      photo_signed_url: gallery[0] ?? productPhotoUrl(r.photo_url),
++      photo_signed_urls: gallery,
++    };
++  });
+ }
  
- export const Route = createFileRoute("/_authenticated/store")({
-@@ -50,6 +52,9 @@ function StorePage() {
-   const [logoPreview, setLogoPreview] = useState<string | null>(null);
-   const [coverPreview, setCoverPreview] = useState<string | null>(null);
-   const [cropKind, setCropKind] = useState<"logo" | "cover" | null>(null);
-+  const [qrOpen, setQrOpen] = useState(false);
-+  const [listed, setListed] = useState(true);
-+  const [featuredRank, setFeaturedRank] = useState(0);
-   const [cropFile, setCropFile] = useState<File | null>(null);
-   const logoInput = useRef<HTMLInputElement | null>(null);
-   const coverInput = useRef<HTMLInputElement | null>(null);
-@@ -70,6 +75,9 @@ function StorePage() {
-     setOpen(!!store.is_open);
-     setTemplate(store.order_code_template ?? "{STALL}-{SEQ}");
-     const images = store as unknown as StoreImages;
-+    const directory = store as unknown as { listed?: boolean | null; featured_rank?: number | null };
-+    setListed(directory.listed ?? true);
-+    setFeaturedRank(Number(directory.featured_rank ?? 0));
-     setLogoPath(images.logo_path ?? null);
-     setCoverPath(images.cover_path ?? null);
-   }, [store]);
-@@ -94,6 +102,8 @@ function StorePage() {
-           disclaimer,
-           is_open: open,
-           order_code_template: template,
-+          listed,
-+          featured_rank: featuredRank,
-         },
-       }),
-     onSuccess: () => {
-@@ -120,6 +130,11 @@ function StorePage() {
+ /** Every voucher attached to a ticket, old single column included. */
+diff --git a/src/routes/_authenticated/products.tsx b/src/routes/_authenticated/products.tsx
+index a0e1766..b2cc6fe 100644
+--- a/src/routes/_authenticated/products.tsx
++++ b/src/routes/_authenticated/products.tsx
+@@ -43,7 +43,9 @@ type Row = {
+   stock_total: number | null;
+   stock_sold: number;
+   photo_url: string | null;
++  photo_urls: string[] | null;
+   photo_signed_url: string | null;
++  photo_signed_urls: string[];
+   combo_items: ComboItem[];
+ };
+ 
+@@ -64,8 +66,15 @@ const blank = {
+   combo_items: [] as ComboItem[],
+   photo_url: null as string | null,
+   photo_preview: null as string | null,
++  /** Storage paths of every shot, first = cover. Max MAX_PHOTOS. */
++  photo_urls: [] as string[],
++  /** Public URLs matching photo_urls, kept in step for the thumbnails. */
++  photo_previews: [] as string[],
+ };
+ 
++/** Owners may show up to five shots per dish; the menu turns them into a carousel. */
++const MAX_PHOTOS = 5;
++
+ type Draft = typeof blank & { id?: string };
+ 
+ /** The create/edit dialog is split per topic instead of one endless form. */
+@@ -157,7 +166,14 @@ function ProductsPage() {
+       }
+       pendingOptionSaves.current.clear();
+       setPendingOptionCount(0);
+-      const { photo_preview: _preview, group_ids, combo_items, stock_total, ...payload } = draft!;
++      const {
++        photo_preview: _preview,
++        photo_previews: _previews,
++        group_ids,
++        combo_items,
++        stock_total,
++        ...payload
++      } = draft!;
+       return save({
+         data: {
+           ...payload,
+@@ -195,7 +211,18 @@ function ProductsPage() {
+     // matches the square tiles used on the menu.
+     mutationFn: async (dataUrl: string) => upload({ data: { base64: dataUrl, ext: "jpg" } }),
+     onSuccess: (res) =>
+-      setDraft((d) => (d ? { ...d, photo_url: res.path, photo_preview: res.signedUrl } : d)),
++      setDraft((d) => {
++        if (!d) return d;
++        const paths = [...d.photo_urls, res.path].slice(0, MAX_PHOTOS);
++        const previews = [...d.photo_previews, res.signedUrl ?? ""].slice(0, MAX_PHOTOS);
++        return {
++          ...d,
++          photo_urls: paths,
++          photo_previews: previews,
++          photo_url: paths[0] ?? null,
++          photo_preview: previews[0] ?? null,
++        };
++      }),
      onError: (e: Error) => toast.error(e.message),
    });
  
-+  // Absolute link so the printed QR works off the phone that generated it.
-+  const storeUrl = store?.slug
-+    ? `${typeof window === "undefined" ? "" : window.location.origin}/s/${store.slug}`
-+    : "";
+@@ -591,43 +618,66 @@ function ProductsPage() {
+             </section>
+ 
+             <section className={`space-y-3 ${tab === "photo" ? "" : "hidden"}`}>
+-              <div className="flex items-center gap-3">
+-                <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-2xl border border-border bg-muted">
+-                  {draft.photo_preview ? (
++              {/* Up to five square shots. The first one is the cover used on
++                  the menu tiles; the rest become the customer carousel. */}
++              <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
++                {draft.photo_previews.map((src, i) => (
++                  <div
++                    key={`${src}-${i}`}
++                    className="group relative aspect-square overflow-hidden rounded-2xl border border-border bg-muted"
++                  >
+                     <img
+-                      src={draft.photo_preview}
+-                      alt={draft.name || t("photo")}
++                      src={src}
++                      alt={`${draft.name || t("photo")} ${i + 1}`}
+                       className="size-full object-cover"
+                     />
+-                  ) : (
+-                    <ImagePlus className="size-5 text-muted-foreground" />
+-                  )}
+-                </div>
+-                <label className="soft-press inline-flex cursor-pointer items-center gap-2 rounded-2xl border border-border bg-card px-4 py-2 text-sm font-semibold">
+-                  <ImagePlus className="size-4" />
+-                  {uploadM.isPending ? t("loading") : t("upload_photo")}
+-                  <input
+-                    type="file"
+-                    accept="image/*"
+-                    className="hidden"
+-                    onChange={(e) => {
+-                      const file = e.target.files?.[0];
+-                      if (file) setCropFile(file);
+-                      e.target.value = "";
+-                    }}
+-                  />
+-                </label>
+-                {draft.photo_url && (
+-                  <button
+-                    type="button"
+-                    onClick={() => setDraft({ ...draft, photo_url: null, photo_preview: null })}
+-                    className="soft-press grid size-9 place-items-center rounded-2xl bg-destructive/10 text-destructive"
+-                    aria-label={t("remove_photo")}
+-                  >
+-                    <X className="size-4" />
+-                  </button>
++                    {i === 0 && (
++                      <span className="absolute inset-x-1 bottom-1 rounded-full bg-foreground/70 px-2 py-0.5 text-center text-[10px] font-bold text-background">
++                        {t("cover_photo_badge")}
++                      </span>
++                    )}
++                    <button
++                      type="button"
++                      onClick={() => {
++                        const paths = draft.photo_urls.filter((_, k) => k !== i);
++                        const previews = draft.photo_previews.filter((_, k) => k !== i);
++                        setDraft({
++                          ...draft,
++                          photo_urls: paths,
++                          photo_previews: previews,
++                          photo_url: paths[0] ?? null,
++                          photo_preview: previews[0] ?? null,
++                        });
++                      }}
++                      className="soft-press absolute right-1 top-1 grid size-6 place-items-center rounded-full bg-destructive text-destructive-foreground"
++                      aria-label={t("remove_photo")}
++                    >
++                      <X className="size-3.5" />
++                    </button>
++                  </div>
++                ))}
 +
-   function pickFile(kind: "logo" | "cover", file: File | undefined) {
-     if (!file) return;
-     setCropKind(kind);
-@@ -149,6 +164,16 @@ function StorePage() {
++                {draft.photo_previews.length < MAX_PHOTOS && (
++                  <label className="soft-press grid aspect-square cursor-pointer place-items-center gap-1 rounded-2xl border border-dashed border-border bg-card text-center text-[11px] font-semibold text-muted-foreground">
++                    <ImagePlus className="size-5" />
++                    {uploadM.isPending ? t("loading") : t("upload_photo")}
++                    <input
++                      type="file"
++                      accept="image/*"
++                      className="hidden"
++                      onChange={(e) => {
++                        const file = e.target.files?.[0];
++                        if (file) setCropFile(file);
++                        e.target.value = "";
++                      }}
++                    />
++                  </label>
                  )}
                </div>
-             </div>
-+            {store?.slug && (
-+              <button
-+                type="button"
-+                onClick={() => setQrOpen(true)}
-+                className="soft-press inline-flex shrink-0 items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs font-bold"
-+              >
-+                <QrCode className="size-4 text-primary" />
-+                <span className="hidden sm:inline">{t("store_qr")}</span>
-+              </button>
-+            )}
-           </div>
- 
-           {!isOwner ? (
-@@ -271,6 +296,33 @@ function StorePage() {
-                 />
-               </label>
- 
-+              <div className="grid gap-3 rounded-2xl bg-muted/40 p-4">
-+                <label className="flex items-center gap-2 text-sm font-semibold">
-+                  <input
-+                    type="checkbox"
-+                    checked={listed}
-+                    onChange={(e) => setListed(e.target.checked)}
-+                    className="size-4"
-+                  />
-+                  {t("store_listed")}
-+                </label>
-+                <label className="block">
-+                  <span className="text-xs font-semibold text-muted-foreground">
-+                    {t("store_featured_rank")}
-+                  </span>
-+                  <input
-+                    type="number"
-+                    min={0}
-+                    value={featuredRank}
-+                    onChange={(e) => setFeaturedRank(Math.max(0, Number(e.target.value) || 0))}
-+                    className={`mt-1 ${inputClass}`}
-+                  />
-+                  <span className="mt-1 block text-[11px] text-muted-foreground">
-+                    {t("store_featured_rank_hint")}
-+                  </span>
-+                </label>
-+              </div>
++              <p className="text-[11px] text-muted-foreground">
++                {t("photo_gallery_hint")} ({draft.photo_previews.length}/{MAX_PHOTOS})
++              </p>
 +
-               <label className="flex items-center gap-2 text-sm font-semibold">
+               <label className="flex items-center gap-2 text-sm">
                  <input
                    type="checkbox"
-@@ -294,6 +346,16 @@ function StorePage() {
-         </section>
-       </div>
- 
-+      <Modal open={qrOpen} onClose={() => setQrOpen(false)} title={t("store_qr")} size="sm">
-+        <div className="flex flex-col items-center gap-3">
-+          <QrImage value={storeUrl} size={240} />
-+          <p className="break-all text-center text-xs font-semibold text-muted-foreground">
-+            {storeUrl}
-+          </p>
-+          <p className="text-center text-xs text-muted-foreground">{t("store_qr_hint")}</p>
-+        </div>
-+      </Modal>
-+
-       {cropFile && cropKind && (
-         <ImageCropper
-           file={cropFile}
-diff --git a/src/routes/order.tsx b/src/routes/order.tsx
-index 1f276c3..88cc2e5 100644
---- a/src/routes/order.tsx
-+++ b/src/routes/order.tsx
-@@ -1,7 +1,10 @@
- import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
- import { useEffect, useState } from "react";
-+import { useQuery } from "@tanstack/react-query";
-+import { useServerFn } from "@tanstack/react-start";
- import { ScanLine, Soup, Store } from "lucide-react";
- import { EmptyState } from "@/components/empty-state";
-+import { listStores } from "@/lib/customer.functions";
- import { LanguageSwitcher } from "@/components/language-switcher";
- import { Modal } from "@/components/modal";
- import { QrScannerBox } from "@/components/qr-scanner-box";
-@@ -38,6 +41,13 @@ function CustomerLanding() {
-   const navigate = useNavigate();
-   const [scanOpen, setScanOpen] = useState(false);
-   const [recent, setRecent] = useState<RecentStall[]>([]);
-+  const fetchStalls = useServerFn(listStores);
-+  const stalls = useQuery({ queryKey: ["stalls"], queryFn: () => fetchStalls({}) });
-+  const all = stalls.data?.stalls ?? [];
-+  // "Recommended" is the owner-controlled top of the directory: anything with a
-+  // manual rank, and otherwise simply the first few stalls.
-+  const ranked = all.filter((s) => s.featured_rank > 0);
-+  const recommended = (ranked.length ? ranked : all).slice(0, 6);
- 
-   useEffect(() => {
-     try {
-@@ -76,12 +86,111 @@ function CustomerLanding() {
-         </section>
- 
-         <section className="cozy-card p-5">
--          <h2 className="font-display text-lg font-bold">{t("landing_recent")}</h2>
--          {recent.length === 0 ? (
-+          <h2 className="font-display text-lg font-bold">{t("landing_recommended")}</h2>
-+          <p className="mt-1 text-xs text-muted-foreground">{t("landing_recommended_hint")}</p>
-+          {recommended.length === 0 ? (
-             <div className="mt-4">
--              <EmptyState title={t("landing_no_recent")} hint={t("landing_no_recent_hint")} />
-+              <EmptyState title={t("landing_no_stalls")} hint={t("landing_no_stalls_hint")} />
-             </div>
-           ) : (
-+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-+              {recommended.map((s) => (
-+                <Link
-+                  key={s.slug}
-+                  to="/s/$slug"
-+                  params={{ slug: s.slug }}
-+                  className="group relative aspect-square overflow-hidden rounded-3xl border border-border bg-muted shadow-cozy transition-transform duration-300 hover:-translate-y-1 hover:shadow-lift focus-visible:-translate-y-1"
-+                >
-+                  {s.cover_url ? (
-+                    <img
-+                      src={s.cover_url}
-+                      alt=""
-+                      className="absolute inset-0 size-full object-cover transition-transform duration-500 group-hover:scale-110"
-+                    />
-+                  ) : (
-+                    <span className="absolute inset-0 bg-gradient-to-br from-primary/25 to-secondary" />
-+                  )}
-+                  <span className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/25 to-transparent" />
-+                  <span className="absolute inset-x-0 bottom-0 flex items-end gap-2 p-3">
-+                    {s.logo_url ? (
-+                      <img
-+                        src={s.logo_url}
-+                        alt=""
-+                        className="size-9 shrink-0 rounded-xl border border-white/40 object-cover"
-+                      />
-+                    ) : (
-+                      <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/20 text-white">
-+                        <Store className="size-4" />
-+                      </span>
-+                    )}
-+                    <span className="min-w-0 flex-1">
-+                      <span className="block truncate text-sm font-bold text-white drop-shadow">
-+                        {s.name}
-+                      </span>
-+                      <span className="block text-[10px] font-semibold uppercase tracking-wide text-white/80">
-+                        {s.is_open ? t("stall_open_badge") : t("stall_closed_badge")}
-+                      </span>
-+                    </span>
-+                  </span>
-+                  {/* Description slides up on hover (and is always shown to keyboard focus). */}
-+                  <span className="pointer-events-none absolute inset-0 flex translate-y-3 items-center justify-center bg-black/65 p-3 text-center text-xs font-semibold text-white opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100">
-+                    {s.tagline || t("landing_recommended_hint")}
-+                  </span>
-+                </Link>
-+              ))}
-+            </div>
-+          )}
-+        </section>
-+
-+        <section className="cozy-card p-5">
-+          <h2 className="font-display text-lg font-bold">{t("landing_all_stalls")}</h2>
-+          {all.length === 0 ? (
-+            <div className="mt-4">
-+              <EmptyState title={t("landing_no_stalls")} hint={t("landing_no_stalls_hint")} />
-+            </div>
-+          ) : (
-+            <ul className="mt-4 space-y-2">
-+              {all.map((s) => (
-+                <li key={s.slug}>
-+                  <Link
-+                    to="/s/$slug"
-+                    params={{ slug: s.slug }}
-+                    className="soft-press flex items-center gap-3 rounded-2xl border border-border bg-card px-3 py-2.5"
-+                  >
-+                    {s.logo_url ? (
-+                      <img src={s.logo_url} alt="" className="size-10 shrink-0 rounded-xl object-cover" />
-+                    ) : (
-+                      <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
-+                        <Store className="size-4" />
-+                      </span>
-+                    )}
-+                    <span className="min-w-0 flex-1">
-+                      <span className="block truncate text-sm font-bold">{s.name}</span>
-+                      {s.tagline && (
-+                        <span className="block truncate text-xs text-muted-foreground">
-+                          {s.tagline}
-+                        </span>
-+                      )}
-+                    </span>
-+                    <span
-+                      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-+                        s.is_open
-+                          ? "bg-primary/10 text-primary"
-+                          : "bg-muted text-muted-foreground"
-+                      }`}
-+                    >
-+                      {s.is_open ? t("stall_open_badge") : t("stall_closed_badge")}
-+                    </span>
-+                  </Link>
-+                </li>
-+              ))}
-+            </ul>
-+          )}
-+        </section>
-+
-+        {recent.length > 0 && (
-+          <section className="cozy-card p-5">
-+            <h2 className="font-display text-lg font-bold">{t("landing_recent")}</h2>
-             <ul className="mt-4 space-y-2">
-               {recent.map((r) => (
-                 <li key={r.slug}>
-@@ -96,8 +205,8 @@ function CustomerLanding() {
-                 </li>
-               ))}
-             </ul>
--          )}
--        </section>
-+          </section>
-+        )}
- 
-         <section className="cozy-card p-5">
-           <h2 className="font-display text-lg font-bold">{t("landing_how")}</h2>
+@@ -700,7 +750,7 @@ function ProductsPage() {
+               onDragStart={() => (dragId.current = p.id)}
+               onDragOver={(e) => canDrag && e.preventDefault()}
+               onDrop={() => canDrag && onDrop(p.id)}
+-              className={`cozy-card flex items-start gap-3 transition-transform duration-200 hover:-translate-y-0.5 ${viewPadClass(prefs)} ${canDrag ? "cursor-grab active:cursor-grabbing" : ""}`}
++              className={`cozy-card flex min-w-0 max-w-full items-start gap-2 overflow-hidden sm:gap-3 transition-transform duration-200 hover:-translate-y-0.5 ${viewPadClass(prefs)} ${canDrag ? "cursor-grab active:cursor-grabbing" : ""}`}
+             >
+               {canDrag && <GripVertical className="mt-1 size-4 shrink-0 text-muted-foreground" />}
+               {p.photo_signed_url && (
+@@ -708,11 +758,11 @@ function ProductsPage() {
+                   src={p.photo_signed_url}
+                   alt={p.name}
+                   loading="lazy"
+-                  className={`shrink-0 rounded-2xl object-cover ${prefs.size === "sm" ? "size-12" : prefs.size === "lg" ? "size-24" : "size-16"}`}
++                  className={`shrink-0 rounded-2xl object-cover ${prefs.size === "sm" ? "size-12" : prefs.size === "lg" ? "size-20 sm:size-24" : "size-14 sm:size-16"}`}
+                 />
+               )}
+               <div className="min-w-0 flex-1">
+-                <p className="truncate font-display text-lg font-bold">
++                <p className="truncate font-display text-base font-bold sm:text-lg">
+                   {p.name}
+                   {p.is_combo && (
+                     <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 align-middle text-[10px] font-bold uppercase text-primary">
+@@ -720,7 +770,7 @@ function ProductsPage() {
+                     </span>
+                   )}
+                 </p>
+-                <p className="text-xs text-muted-foreground">
++                <p className="break-words text-xs text-muted-foreground">
+                   {p.category || "—"} · {p.is_available ? t("available") : t("sold")}
+                   {(p.group_ids ?? []).length > 0 &&
+                     ` · ${(p.group_ids ?? [])
+@@ -752,7 +802,7 @@ function ProductsPage() {
+                   </span>
+                 </p>
+               </div>
+-              <div className="flex flex-col gap-2">
++              <div className="flex shrink-0 flex-col gap-2">
+                 <button
+                   onClick={() => {
+                     setTab(p.is_combo ? "combo" : "basics");
+@@ -775,6 +825,8 @@ function ProductsPage() {
+                       })),
+                       photo_url: p.photo_url,
+                       photo_preview: p.photo_signed_url,
++                      photo_urls: (p.photo_urls ?? []).filter(Boolean),
++                      photo_previews: p.photo_signed_urls ?? [],
+                     });
+                   }}
+                   className="soft-press grid size-9 place-items-center rounded-2xl border border-border"
+diff --git a/src/routes/_authenticated/promos.tsx b/src/routes/_authenticated/promos.tsx
+index 03881a0..a41a8da 100644
+--- a/src/routes/_authenticated/promos.tsx
++++ b/src/routes/_authenticated/promos.tsx
+@@ -248,7 +248,7 @@ function PromosPage() {
+             <summary className="soft-press inline-flex cursor-pointer list-none items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground shadow-lift">
+               <Plus className="size-4" /> {t("new_promo")}
+             </summary>
+-            <div className="absolute right-0 z-30 mt-2 w-[min(16rem,calc(100vw-2.5rem))] rounded-2xl border border-border bg-card p-2 shadow-lift">
++            <div className="absolute left-0 right-auto z-30 mt-2 w-[min(16rem,calc(100vw-2.5rem))] sm:left-auto sm:right-0 rounded-2xl border border-border bg-card p-2 shadow-lift">
+               <p className="px-2 pb-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                 {t("choose_promo_type")}
+               </p>
 diff --git a/src/routes/s.$slug.tsx b/src/routes/s.$slug.tsx
-index 816522e..71f343c 100644
+index 71f343c..9d6d3ff 100644
 --- a/src/routes/s.$slug.tsx
 +++ b/src/routes/s.$slug.tsx
-@@ -366,7 +366,7 @@ function StorePage() {
+@@ -9,6 +9,8 @@ import {
+   ArrowUp,
+   Bell,
+   Check,
++  ChevronLeft,
++  ChevronRight,
+   ClipboardList,
+   Home,
+   Minus,
+@@ -890,6 +892,93 @@ function StorePage() {
+   );
+ }
  
-   return (
-     <div className="grain min-h-screen bg-background pb-40">
--      <header className="mx-auto grid max-w-3xl grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-5 sm:flex sm:justify-between">
-+      <header className="mx-auto flex max-w-3xl flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
-         <div className="flex min-w-0 items-center gap-3">
-           {store.logo_url ? (
-             <img
-@@ -387,7 +387,7 @@ function StorePage() {
-             </p>
-           </div>
-         </div>
--        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-+        <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-           <Link
-             to="/order"
-             className="soft-press inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs font-semibold"
-diff --git a/supabase/migrations/20260812000000_store_directory.sql b/supabase/migrations/20260812000000_store_directory.sql
-new file mode 100644
-index 0000000..1111111
---- /dev/null
-+++ b/supabase/migrations/20260812000000_store_directory.sql
-@@ -0,0 +1,8 @@
-+-- Public stall directory: every store can opt in/out of the /order listing and
-+-- carry a manual rank so an owner can pin their own stall to the top.
-+alter table public.stores
-+  add column if not exists listed boolean not null default true,
-+  add column if not exists featured_rank integer not null default 0;
++/**
++ * Swipeable gallery for the up-to-five shots an owner uploaded. Falls back to
++ * a plain square image when the dish only has one photo.
++ */
++function ProductCarousel({ product, title }: { product: MenuProduct; title: string }) {
++  const shots = (
++    (product as { photo_signed_urls?: string[] }).photo_signed_urls?.length
++      ? (product as { photo_signed_urls?: string[] }).photo_signed_urls!
++      : product.photo_signed_url
++        ? [product.photo_signed_url]
++        : []
++  ).filter(Boolean);
++  const [active, setActive] = useState(0);
++  const trackRef = useRef<HTMLDivElement>(null);
 +
-+create index if not exists stores_directory_idx
-+  on public.stores (listed, featured_rank desc, name);
++  if (shots.length === 0) return null;
++
++  const go = (index: number) => {
++    const next = (index + shots.length) % shots.length;
++    setActive(next);
++    const track = trackRef.current;
++    if (track) track.scrollTo({ left: track.clientWidth * next, behavior: "smooth" });
++  };
++
++  return (
++    <div className="mx-auto w-full max-w-[240px] sm:max-w-[320px]">
++      <div className="relative overflow-hidden rounded-2xl">
++        <div
++          ref={trackRef}
++          onScroll={(e) => {
++            const el = e.currentTarget;
++            if (el.clientWidth) setActive(Math.round(el.scrollLeft / el.clientWidth));
++          }}
++          className="flex snap-x snap-mandatory overflow-x-auto scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
++        >
++          {shots.map((src, i) => (
++            <img
++              key={`${src}-${i}`}
++              src={src}
++              alt={`${title} ${i + 1}`}
++              loading={i === 0 ? "eager" : "lazy"}
++              className="aspect-square w-full shrink-0 snap-center object-cover"
++            />
++          ))}
++        </div>
++
++        {shots.length > 1 && (
++          <>
++            <button
++              type="button"
++              onClick={() => go(active - 1)}
++              aria-label="Previous photo"
++              className="soft-press absolute left-1 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-full bg-background/80 text-foreground shadow-lift"
++            >
++              <ChevronLeft className="size-4" />
++            </button>
++            <button
++              type="button"
++              onClick={() => go(active + 1)}
++              aria-label="Next photo"
++              className="soft-press absolute right-1 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-full bg-background/80 text-foreground shadow-lift"
++            >
++              <ChevronRight className="size-4" />
++            </button>
++          </>
++        )}
++      </div>
++
++      {shots.length > 1 && (
++        <div className="mt-2 flex justify-center gap-1.5">
++          {shots.map((src, i) => (
++            <button
++              key={`dot-${src}-${i}`}
++              type="button"
++              onClick={() => go(i)}
++              aria-label={`Photo ${i + 1}`}
++              className={`h-1.5 rounded-full transition-all duration-200 ${
++                i === active ? "w-5 bg-primary" : "w-1.5 bg-border"
++              }`}
++            />
++          ))}
++        </div>
++      )}
++    </div>
++  );
++}
++
+ /** Product sheet: photo, description and every customisation the owner defined. */
+ function ProductDetail({
+   product,
+@@ -924,14 +1013,7 @@ function ProductDetail({
+   return (
+     <Modal open onClose={onClose} title={title} subtitle={product.description || undefined}>
+       <div className="space-y-4">
+-        {product.photo_signed_url && (
+-          // Square crop, but never taller than a phone can comfortably show.
+-          <img
+-            src={product.photo_signed_url}
+-            alt={title}
+-            className="mx-auto aspect-square w-full max-w-[240px] rounded-2xl object-cover sm:max-w-[320px]"
+-          />
+-        )}
++        <ProductCarousel product={product} title={title} />
+ 
+         {product.options.map((o) => (
+           <div key={o.id}>
+diff --git a/supabase/migrations/20260813000000_product_gallery.sql b/supabase/migrations/20260813000000_product_gallery.sql
+new file mode 100644
+index 0000000..c964e4c
+--- /dev/null
++++ b/supabase/migrations/20260813000000_product_gallery.sql
+@@ -0,0 +1,21 @@
++-- Owners may show up to five photos per dish. The first one stays in
++-- products.photo_url so every existing read path keeps working; the extra
++-- shots live in photo_urls and drive the carousel on the customer menu.
++ALTER TABLE public.products
++  ADD COLUMN IF NOT EXISTS photo_urls text[] NOT NULL DEFAULT '{}'::text[];
++
++COMMENT ON COLUMN public.products.photo_urls IS
++  'Storage paths (product-photos bucket) of the product gallery, max 5, first = cover.';
++
++-- Backfill: existing single photos become a one-shot gallery.
++UPDATE public.products
++   SET photo_urls = ARRAY[photo_url]
++ WHERE photo_url IS NOT NULL
++   AND (photo_urls IS NULL OR cardinality(photo_urls) = 0);
++
++-- Hard cap so no client can push more than five shots.
++ALTER TABLE public.products
++  DROP CONSTRAINT IF EXISTS products_photo_urls_max5;
++ALTER TABLE public.products
++  ADD CONSTRAINT products_photo_urls_max5
++  CHECK (photo_urls IS NULL OR cardinality(photo_urls) <= 5);
 -- 
 2.43.0
 

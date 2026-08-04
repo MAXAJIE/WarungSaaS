@@ -9,6 +9,8 @@ import {
   ArrowUp,
   Bell,
   Check,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   Home,
   Minus,
@@ -890,6 +892,93 @@ function StorePage() {
   );
 }
 
+/**
+ * Swipeable gallery for the up-to-five shots an owner uploaded. Falls back to
+ * a plain square image when the dish only has one photo.
+ */
+function ProductCarousel({ product, title }: { product: MenuProduct; title: string }) {
+  const shots = (
+    (product as { photo_signed_urls?: string[] }).photo_signed_urls?.length
+      ? (product as { photo_signed_urls?: string[] }).photo_signed_urls!
+      : product.photo_signed_url
+        ? [product.photo_signed_url]
+        : []
+  ).filter(Boolean);
+  const [active, setActive] = useState(0);
+  const trackRef = useRef<HTMLDivElement>(null);
+
+  if (shots.length === 0) return null;
+
+  const go = (index: number) => {
+    const next = (index + shots.length) % shots.length;
+    setActive(next);
+    const track = trackRef.current;
+    if (track) track.scrollTo({ left: track.clientWidth * next, behavior: "smooth" });
+  };
+
+  return (
+    <div className="mx-auto w-full max-w-[240px] sm:max-w-[320px]">
+      <div className="relative overflow-hidden rounded-2xl">
+        <div
+          ref={trackRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            if (el.clientWidth) setActive(Math.round(el.scrollLeft / el.clientWidth));
+          }}
+          className="flex snap-x snap-mandatory overflow-x-auto scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {shots.map((src, i) => (
+            <img
+              key={`${src}-${i}`}
+              src={src}
+              alt={`${title} ${i + 1}`}
+              loading={i === 0 ? "eager" : "lazy"}
+              className="aspect-square w-full shrink-0 snap-center object-cover"
+            />
+          ))}
+        </div>
+
+        {shots.length > 1 && (
+          <>
+            <button
+              type="button"
+              onClick={() => go(active - 1)}
+              aria-label="Previous photo"
+              className="soft-press absolute left-1 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-full bg-background/80 text-foreground shadow-lift"
+            >
+              <ChevronLeft className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => go(active + 1)}
+              aria-label="Next photo"
+              className="soft-press absolute right-1 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-full bg-background/80 text-foreground shadow-lift"
+            >
+              <ChevronRight className="size-4" />
+            </button>
+          </>
+        )}
+      </div>
+
+      {shots.length > 1 && (
+        <div className="mt-2 flex justify-center gap-1.5">
+          {shots.map((src, i) => (
+            <button
+              key={`dot-${src}-${i}`}
+              type="button"
+              onClick={() => go(i)}
+              aria-label={`Photo ${i + 1}`}
+              className={`h-1.5 rounded-full transition-all duration-200 ${
+                i === active ? "w-5 bg-primary" : "w-1.5 bg-border"
+              }`}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Product sheet: photo, description and every customisation the owner defined. */
 function ProductDetail({
   product,
@@ -924,14 +1013,7 @@ function ProductDetail({
   return (
     <Modal open onClose={onClose} title={title} subtitle={product.description || undefined}>
       <div className="space-y-4">
-        {product.photo_signed_url && (
-          // Square crop, but never taller than a phone can comfortably show.
-          <img
-            src={product.photo_signed_url}
-            alt={title}
-            className="mx-auto aspect-square w-full max-w-[240px] rounded-2xl object-cover sm:max-w-[320px]"
-          />
-        )}
+        <ProductCarousel product={product} title={title} />
 
         {product.options.map((o) => (
           <div key={o.id}>

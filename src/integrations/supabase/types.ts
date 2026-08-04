@@ -502,6 +502,7 @@ export type Database = {
           name_ms: string;
           name_zh: string;
           photo_url: string | null;
+          photo_urls?: string[] | null;
           sell_price: number;
           sort_order: number;
           stock_sold: number;
@@ -521,6 +522,7 @@ export type Database = {
           name_ms?: string;
           name_zh?: string;
           photo_url?: string | null;
+          photo_urls?: string[] | null;
           sell_price?: number;
           sort_order?: number;
           stock_sold?: number;
@@ -540,6 +542,7 @@ export type Database = {
           name_ms?: string;
           name_zh?: string;
           photo_url?: string | null;
+          photo_urls?: string[] | null;
           sell_price?: number;
           sort_order?: number;
           stock_sold?: number;

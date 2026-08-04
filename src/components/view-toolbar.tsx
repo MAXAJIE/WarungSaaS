@@ -57,10 +57,11 @@ export function useViewPrefs(key: string, initial?: Partial<ViewPrefs>) {
 
 /** Tailwind grid classes for the chosen size + arrangement. */
 export function viewGridClass(prefs: ViewPrefs) {
-  if (prefs.layout === "list") return "grid grid-cols-1 gap-3";
-  if (prefs.size === "sm") return "grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
-  if (prefs.size === "lg") return "grid gap-4 lg:grid-cols-2";
-  return "grid gap-3 md:grid-cols-2 xl:grid-cols-3";
+  if (prefs.layout === "list") return "grid grid-cols-[minmax(0,1fr)] gap-3";
+  if (prefs.size === "sm")
+    return "grid grid-cols-[minmax(0,1fr)] gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
+  if (prefs.size === "lg") return "grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2";
+  return "grid grid-cols-[minmax(0,1fr)] gap-3 md:grid-cols-2 xl:grid-cols-3";
 }
 
 export function viewPadClass(prefs: ViewPrefs) {
