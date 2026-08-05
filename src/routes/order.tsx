@@ -44,10 +44,14 @@ function CustomerLanding() {
   const fetchStalls = useServerFn(listStores);
   const stalls = useQuery({ queryKey: ["stalls"], queryFn: () => fetchStalls({}) });
   const all = stalls.data?.stalls ?? [];
-  // "Recommended" is the owner-controlled top of the directory: anything with a
-  // manual rank, and otherwise simply the first few stalls.
-  const ranked = all.filter((s) => s.featured_rank > 0);
-  const recommended = (ranked.length ? ranked : all).slice(0, 6);
+  // "Recommended" is strictly owner-controlled: only stalls whose owner gave
+  // themselves a recommended position show up here, highest position first.
+  // No silent fallback to "the first few stalls" — an owner who wants to be in
+  // this row sets it in their own store settings.
+  const recommended = [...all]
+    .filter((s) => s.featured_rank > 0)
+    .sort((a, b) => b.featured_rank - a.featured_rank)
+    .slice(0, 6);
 
   useEffect(() => {
     try {
@@ -90,7 +94,10 @@ function CustomerLanding() {
           <p className="mt-1 text-xs text-muted-foreground">{t("landing_recommended_hint")}</p>
           {recommended.length === 0 ? (
             <div className="mt-4">
-              <EmptyState title={t("landing_no_stalls")} hint={t("landing_no_stalls_hint")} />
+              <EmptyState
+                title={t("landing_no_recommended")}
+                hint={t("landing_no_recommended_hint")}
+              />
             </div>
           ) : (
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">

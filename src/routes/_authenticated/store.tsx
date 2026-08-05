@@ -306,6 +306,15 @@ function StorePage() {
                   />
                   {t("store_listed")}
                 </label>
+                <label className="flex items-center gap-2 text-sm font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={featuredRank > 0}
+                    onChange={(e) => setFeaturedRank(e.target.checked ? 1 : 0)}
+                    className="size-4"
+                  />
+                  {t("store_featured_toggle")}
+                </label>
                 <label className="block">
                   <span className="text-xs font-semibold text-muted-foreground">
                     {t("store_featured_rank")}
@@ -321,6 +330,9 @@ function StorePage() {
                     {t("store_featured_rank_hint")}
                   </span>
                 </label>
+                <p className="text-[11px] text-muted-foreground">
+                  {t("store_featured_toggle_hint")}
+                </p>
               </div>
 
               <label className="flex items-center gap-2 text-sm font-semibold">

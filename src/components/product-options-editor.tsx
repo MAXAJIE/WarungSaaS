@@ -13,13 +13,24 @@ import { useI18n } from "@/lib/i18n";
 
 type Value = { id?: string; label: string; price_delta: number };
 type OptionDraft = { id?: string; name: string; is_required: boolean; values: Value[] };
+/** A customisation group typed before the product exists, kept in the dialog. */
+export type LocalOptionGroup = { name: string; is_required: boolean; values: Value[] };
 
 const inputClass =
   "w-full rounded-2xl border border-border bg-card px-3 py-2 text-sm outline-none focus:border-primary";
 
-/** Owner-side editor for the choices a customer sees on a product. */
+/**
+ * Owner-side editor for the choices a customer sees on a product.
+ *
+ * Works in two modes:
+ * - saved product (`productId` set): groups are read from and written to the server.
+ * - unsaved draft (`productId` null): groups live in `localValue` and the parent
+ *   dialog persists them right after the product row is created.
+ */
 export function ProductOptionsEditor({
   productId,
+  localValue,
+  onLocalChange,
   /**
    * Lets the parent dialog flush an in-progress customisation template when the
    * product itself is saved, so a half-typed group is never silently dropped.
@@ -27,7 +38,9 @@ export function ProductOptionsEditor({
    */
   onPendingSaveChange,
 }: {
-  productId: string;
+  productId: string | null;
+  localValue?: LocalOptionGroup[];
+  onLocalChange?: (groups: LocalOptionGroup[]) => void;
   onPendingSaveChange?: (productId: string, save: (() => Promise<void>) | null) => void;
 }) {
   const { t } = useI18n();
@@ -35,43 +48,72 @@ export function ProductOptionsEditor({
   const list = useServerFn(listProductOptions);
   const save = useServerFn(upsertProductOption);
   const remove = useServerFn(deleteProductOption);
-  const [draft, setDraft] = useState<OptionDraft | null>(null);
+  const [draft, setDraft] = useState<(OptionDraft & { localIndex?: number }) | null>(null);
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<{ id: string; name: string } | null>(
     null,
   );
   const [confirmDeleteValueIdx, setConfirmDeleteValueIdx] = useState<number | null>(null);
+  const isLocal = !productId;
+  const localGroups = localValue ?? [];
 
   const options = useQuery({
-    queryKey: ["product-options", productId],
-    queryFn: () => list({ data: { product_id: productId } }),
+    queryKey: ["product-options", productId ?? "new"],
+    queryFn: () => list({ data: { product_id: productId as string } }),
+    enabled: !isLocal,
   });
 
   // Kept in a ref so the saver handed to the parent always reads the latest
   // draft without the parent having to re-subscribe on every keystroke.
-  const draftRef = useRef<OptionDraft | null>(draft);
+  const draftRef = useRef<(OptionDraft & { localIndex?: number }) | null>(draft);
   draftRef.current = draft;
+  const localRef = useRef<LocalOptionGroup[]>(localGroups);
+  localRef.current = localGroups;
+  const onLocalChangeRef = useRef(onLocalChange);
+  onLocalChangeRef.current = onLocalChange;
 
   const persistDraft = useCallback(async () => {
     const d = draftRef.current;
     if (!d || !d.name.trim()) return;
+    const values = d.values.filter((v) => v.label.trim());
+    if (isLocal) {
+      // Nothing to talk to yet: hold the group in the dialog and let the parent
+      // write it once the product row has an id.
+      const group: LocalOptionGroup = {
+        name: d.name.trim(),
+        is_required: d.is_required,
+        values: values.map((v) => ({
+          label: v.label.trim(),
+          price_delta: Number(v.price_delta) || 0,
+        })),
+      };
+      const next =
+        d.localIndex === undefined
+          ? [...localRef.current, group]
+          : localRef.current.map((g, i) => (i === d.localIndex ? group : g));
+      localRef.current = next;
+      onLocalChangeRef.current?.(next);
+      setDraft(null);
+      return;
+    }
     await save({
       data: {
         ...(d.id ? { id: d.id } : {}),
-        product_id: productId,
+        product_id: productId as string,
         name: d.name,
         is_required: d.is_required,
-        values: d.values.filter((v) => v.label.trim()).map((v, i) => ({ ...v, sort_order: i })),
+        values: values.map((v, i) => ({ ...v, sort_order: i })),
       },
     });
     setDraft(null);
     await qc.invalidateQueries({ queryKey: ["product-options", productId] });
-  }, [productId, qc, save]);
+  }, [isLocal, productId, qc, save]);
 
   const hasPending = !!draft?.name.trim();
   useEffect(() => {
     if (!onPendingSaveChange) return;
-    onPendingSaveChange(productId, hasPending ? persistDraft : null);
-    return () => onPendingSaveChange(productId, null);
+    const key = productId ?? "new";
+    onPendingSaveChange(key, hasPending ? persistDraft : null);
+    return () => onPendingSaveChange(key, null);
   }, [hasPending, onPendingSaveChange, persistDraft, productId]);
 
   const saveM = useMutation({
@@ -86,11 +128,21 @@ export function ProductOptionsEditor({
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const rows = options.data ?? [];
+  const rows = isLocal
+    ? localGroups.map((g, i) => ({
+        id: `local-${i}`,
+        name: g.name,
+        is_required: g.is_required,
+        values: g.values.map((v) => ({ label: v.label, price_delta: v.price_delta })),
+      }))
+    : (options.data ?? []);
 
   return (
     <div className="space-y-3">
-      {rows.map((o) => (
+      {isLocal && (
+        <p className="text-[11px] text-muted-foreground">{t("options_before_save_hint")}</p>
+      )}
+      {rows.map((o, rowIndex) => (
         <div key={o.id} className="rounded-2xl border border-border bg-card p-3">
           <div className="flex items-center gap-2">
             <p className="min-w-0 flex-1 truncate text-sm font-bold">
@@ -101,11 +153,11 @@ export function ProductOptionsEditor({
               type="button"
               onClick={() =>
                 setDraft({
-                  id: o.id,
+                  ...(isLocal ? { localIndex: rowIndex } : { id: o.id }),
                   name: o.name,
                   is_required: o.is_required,
                   values: o.values.map((v) => ({
-                    id: v.id,
+                    ...("id" in v && v.id ? { id: v.id as string } : {}),
                     label: v.label,
                     price_delta: Number(v.price_delta),
                   })),
@@ -117,7 +169,11 @@ export function ProductOptionsEditor({
             </button>
             <button
               type="button"
-              onClick={() => setConfirmDeleteGroup({ id: o.id, name: o.name })}
+              onClick={() =>
+                isLocal
+                  ? setConfirmDeleteGroup({ id: `local-${rowIndex}`, name: o.name })
+                  : setConfirmDeleteGroup({ id: o.id, name: o.name })
+              }
               aria-label={t("delete")}
               className="soft-press grid size-8 place-items-center rounded-xl bg-destructive/10 text-destructive"
             >
@@ -234,7 +290,18 @@ export function ProductOptionsEditor({
       <ConfirmDialog
         open={!!confirmDeleteGroup}
         onClose={() => setConfirmDeleteGroup(null)}
-        onConfirm={() => confirmDeleteGroup && delM.mutate(confirmDeleteGroup.id)}
+        onConfirm={() => {
+          if (!confirmDeleteGroup) return;
+          if (isLocal) {
+            const index = Number(confirmDeleteGroup.id.replace("local-", ""));
+            const next = localRef.current.filter((_, i) => i !== index);
+            localRef.current = next;
+            onLocalChangeRef.current?.(next);
+            if (draft?.localIndex === index) setDraft(null);
+            return;
+          }
+          delM.mutate(confirmDeleteGroup.id);
+        }}
         title={t("delete_option_group_title")}
         message={confirmDeleteGroup?.name ?? ""}
         confirmLabel={t("delete")}

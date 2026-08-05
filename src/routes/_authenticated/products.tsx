@@ -15,11 +15,12 @@ import {
   reorderProducts,
   uploadProductPhoto,
   upsertProduct,
+  upsertProductOption,
 } from "@/lib/staff.functions";
 import { ViewToolbar, useViewPrefs, viewGridClass, viewPadClass } from "@/components/view-toolbar";
 import { ImageCropper } from "@/components/image-cropper";
 import { EmptyState } from "@/components/empty-state";
-import { ProductOptionsEditor } from "@/components/product-options-editor";
+import { ProductOptionsEditor, type LocalOptionGroup } from "@/components/product-options-editor";
 
 export const Route = createFileRoute("/_authenticated/products")({
   component: ProductsPage,
@@ -125,6 +126,7 @@ function ProductsPage() {
     enabled: hasStore,
   });
   const save = useServerFn(upsertProduct);
+  const saveOption = useServerFn(upsertProductOption);
   const upload = useServerFn(uploadProductPhoto);
   const reorder = useServerFn(reorderProducts);
   const { prefs, set } = useViewPrefs("products");
@@ -147,6 +149,23 @@ function ProductsPage() {
       setPendingOptionCount(pendingOptionSaves.current.size);
     },
     [],
+  );
+  // Customisations typed before the product exists. Mirrored in a ref so the
+  // save mutation reads the freshest list without waiting for a re-render.
+  const [optionDrafts, setOptionDrafts] = useState<LocalOptionGroup[]>([]);
+  const optionDraftsRef = useRef<LocalOptionGroup[]>([]);
+  const applyOptionDrafts = useCallback((groups: LocalOptionGroup[]) => {
+    optionDraftsRef.current = groups;
+    setOptionDrafts(groups);
+  }, []);
+  /** Opens the dialog on a fresh draft, clearing any leftover customisations. */
+  const openDraft = useCallback(
+    (next: Draft, startTab: TabId) => {
+      applyOptionDrafts([]);
+      setTab(startTab);
+      setDraft(next);
+    },
+    [applyOptionDrafts],
   );
 
   const allRows = (list.data as Row[] | undefined) ?? [];
@@ -174,7 +193,8 @@ function ProductsPage() {
         stock_total,
         ...payload
       } = draft!;
-      return save({
+      const isNew = !draft!.id;
+      const saved = await save({
         data: {
           ...payload,
           // Owners set the TOTAL ever stocked; sold units are tracked separately
@@ -184,11 +204,33 @@ function ProductsPage() {
           combo_items: payload.is_combo ? combo_items : [],
         },
       });
+      // A brand-new product only gets an id here, so the customisations typed
+      // in the dialog are written against it now.
+      const pendingGroups = isNew ? optionDraftsRef.current : [];
+      const newId = (saved as { id?: string } | null)?.id;
+      if (newId && pendingGroups.length) {
+        for (const [index, group] of pendingGroups.entries()) {
+          await saveOption({
+            data: {
+              product_id: newId,
+              name: group.name,
+              is_required: group.is_required,
+              sort_order: index,
+              values: group.values
+                .filter((v) => v.label.trim())
+                .map((v, i) => ({ label: v.label, price_delta: v.price_delta, sort_order: i })),
+            },
+          });
+        }
+      }
+      applyOptionDrafts([]);
+      return saved;
     },
 
     onSuccess: () => {
       setDraft(null);
       qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["product-options"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -285,19 +327,13 @@ function ProductsPage() {
     >
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <button
-          onClick={() => {
-            setTab("basics");
-            setDraft({ ...blank });
-          }}
+          onClick={() => openDraft({ ...blank }, "basics")}
           className="soft-press inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground shadow-lift"
         >
           <Plus className="size-4" /> {t("new_product")}
         </button>
         <button
-          onClick={() => {
-            setTab("combo");
-            setDraft({ ...blank, is_combo: true });
-          }}
+          onClick={() => openDraft({ ...blank, is_combo: true }, "combo")}
           className="soft-press inline-flex items-center gap-2 rounded-full border border-border bg-card px-5 py-2.5 text-sm font-bold"
         >
           <Layers className="size-4" /> {t("new_combo")}
@@ -319,14 +355,20 @@ function ProductsPage() {
 
       <Modal
         open={!!draft}
-        onClose={() => setDraft(null)}
+        onClose={() => {
+          setDraft(null);
+          applyOptionDrafts([]);
+        }}
         title={draft?.id ? t("edit_product") : draft?.is_combo ? t("new_combo") : t("new_product")}
         subtitle={draft?.id ? draft.name : undefined}
         size="lg"
         footer={
           <>
             <button
-              onClick={() => setDraft(null)}
+              onClick={() => {
+                setDraft(null);
+                applyOptionDrafts([]);
+              }}
               className="soft-press flex-1 rounded-2xl border border-border bg-card px-4 py-3 text-sm font-bold"
             >
               {t("cancel")}
@@ -606,15 +648,15 @@ function ProductsPage() {
             </section>
 
             <section className={`space-y-3 ${tab === "options" ? "" : "hidden"}`}>
-              {draft.id ? (
-                <ProductOptionsEditor
-                  productId={draft.id}
-                  onPendingSaveChange={registerPendingOptionSave}
-                />
-
-              ) : (
-                <p className="text-sm text-muted-foreground">{t("save_first")}</p>
-              )}
+              {/* Unsaved products keep their customisations in the dialog; they
+                  are written as soon as the product row is created. */}
+              <ProductOptionsEditor
+                productId={draft.id ?? null}
+                {...(draft.id
+                  ? {}
+                  : { localValue: optionDrafts, onLocalChange: applyOptionDrafts })}
+                onPendingSaveChange={registerPendingOptionSave}
+              />
             </section>
 
             <section className={`space-y-3 ${tab === "photo" ? "" : "hidden"}`}>
@@ -736,10 +778,7 @@ function ProductsPage() {
           title={allRows.length ? t("empty_products_filtered_title") : t("empty_products_title")}
           hint={allRows.length ? t("empty_products_filtered_hint") : t("empty_products_hint")}
           {...(allRows.length ? {} : { actionLabel: t("new_product") })}
-          onAction={() => {
-            setTab("basics");
-            setDraft({ ...blank });
-          }}
+          onAction={() => openDraft({ ...blank }, "basics")}
         />
       ) : (
         <div className={viewGridClass(prefs)}>
@@ -804,31 +843,33 @@ function ProductsPage() {
               </div>
               <div className="flex shrink-0 flex-col gap-2">
                 <button
-                  onClick={() => {
-                    setTab(p.is_combo ? "combo" : "basics");
-                    setDraft({
-                      id: p.id,
-                      name: p.name,
-                      name_zh: p.name_zh ?? "",
-                      name_ms: p.name_ms ?? "",
-                      description: p.description ?? "",
-                      category: p.category ?? "",
-                      cost_price: Number(p.cost_price),
-                      sell_price: Number(p.sell_price),
-                      is_available: p.is_available,
-                      is_combo: p.is_combo,
-                      stock_total: p.stock_total ?? "",
-                      group_ids: p.group_ids ?? [],
-                      combo_items: p.combo_items.map((c) => ({
-                        product_id: c.product_id,
-                        qty: c.qty,
-                      })),
-                      photo_url: p.photo_url,
-                      photo_preview: p.photo_signed_url,
-                      photo_urls: (p.photo_urls ?? []).filter(Boolean),
-                      photo_previews: p.photo_signed_urls ?? [],
-                    });
-                  }}
+                  onClick={() =>
+                    openDraft(
+                      {
+                        id: p.id,
+                        name: p.name,
+                        name_zh: p.name_zh ?? "",
+                        name_ms: p.name_ms ?? "",
+                        description: p.description ?? "",
+                        category: p.category ?? "",
+                        cost_price: Number(p.cost_price),
+                        sell_price: Number(p.sell_price),
+                        is_available: p.is_available,
+                        is_combo: p.is_combo,
+                        stock_total: p.stock_total ?? "",
+                        group_ids: p.group_ids ?? [],
+                        combo_items: p.combo_items.map((c) => ({
+                          product_id: c.product_id,
+                          qty: c.qty,
+                        })),
+                        photo_url: p.photo_url,
+                        photo_preview: p.photo_signed_url,
+                        photo_urls: (p.photo_urls ?? []).filter(Boolean),
+                        photo_previews: p.photo_signed_urls ?? [],
+                      },
+                      p.is_combo ? "combo" : "basics",
+                    )
+                  }
                   className="soft-press grid size-9 place-items-center rounded-2xl border border-border"
                   aria-label={t("edit")}
                 >
